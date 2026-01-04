@@ -3,6 +3,8 @@ import json
 import re
 import string
 import numpy as np
+import torch
+
 from flask import Flask, request, jsonify, send_from_directory
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
@@ -13,14 +15,22 @@ app = Flask(__name__)
 # --- Setup paths and load resources once ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
-dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu")
+dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 output_dir = os.path.join(current_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
 
 with open(mapping_path, "r") as f:
     gloss_map = json.load(f)
-word_to_pkl = {v.lower(): k for k, v in gloss_map.items()}
+
+# Create reverse mapping and filter to only words with existing pickle files
+word_to_pkl = {}
+for pkl_file, word in gloss_map.items():
+    full_path = os.path.join(dataset_dir, pkl_file)
+    if os.path.exists(full_path):
+        word_to_pkl[word.lower()] = pkl_file
+
 dataset_words = set(word_to_pkl.keys())
+print(f"Loaded {len(dataset_words)} words with available pose data (out of {len(gloss_map)} total)")
 
 animator = WordToSMPLX(model_path=os.path.join(current_dir, "models"))
 
@@ -35,10 +45,10 @@ def extract_video_id(url):
     else:
         raise ValueError("Invalid YouTube URL or video ID.")
 
-def transcript_to_words(transcript):
-    # transcript: list of FetchedTranscriptSnippet objects with .text attribute
+def transcript_to_words(transcript_list):
+    # transcript_list: FetchedTranscript iterable with FetchedTranscriptSnippet objects
     words = []
-    for entry in transcript:
+    for entry in transcript_list:
         text = entry.text if hasattr(entry, 'text') else str(entry)
         for w in text.lower().split():
             w_clean = w.strip(string.punctuation)
@@ -56,13 +66,13 @@ def asl_from_youtube():
     try:
         video_id = extract_video_id(url)
         api = YouTubeTranscriptApi()
-        transcript = api.fetch(video_id)
-    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable):
-        return jsonify({'error': 'No transcript available for this video.'}), 404
+        transcript_list = api.fetch(video_id)
+    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
+        return jsonify({'error': f'No transcript available for this video: {str(e)}'}), 404
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Error fetching transcript: {str(e)}'}), 500
 
-    words = transcript_to_words(transcript)
+    words = transcript_to_words(transcript_list)
     if not words:
         return jsonify({'error': 'No recognizable ASL words found in transcript.'}), 400
 
@@ -71,13 +81,51 @@ def asl_from_youtube():
     if os.path.exists(video_path):
         return jsonify({'url': f"/output/{video_filename}", 'words': words})
 
-    # Load and concatenate pose data
+    # Load and concatenate pose data with comprehensive error handling
     pose_data_sequences = []
+    successful_words = []
+    skipped_words = []
+    
     for word in words:
-        pkl_file = os.path.join(dataset_dir, word_to_pkl[word])
-        pose_data_dict = animator.load_pose_sequence(pkl_file)
-        smplx_params_np = np.stack(pose_data_dict['smplx'])
-        pose_data_sequences.append(smplx_params_np)
+        try:
+            pkl_file = os.path.join(dataset_dir, word_to_pkl[word])
+            
+            # Suppress stdout/stderr during loading to hide torch warnings
+            import sys
+            import io
+            old_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            
+            try:
+                pose_data_dict = animator.load_pose_sequence(pkl_file)
+                smplx_params_np = np.stack(pose_data_dict['smplx'])
+                pose_data_sequences.append(smplx_params_np)
+                successful_words.append(word)
+            finally:
+                sys.stderr = old_stderr
+                
+        except RuntimeError as e:
+            # CUDA deserialization error - skip silently
+            if 'cuda' in str(e).lower():
+                skipped_words.append(word)
+                continue
+            else:
+                # Other runtime errors - log and skip
+                print(f"RuntimeError for '{word}': {str(e)[:100]}")
+                skipped_words.append(word)
+                continue
+        except Exception as e:
+            # Any other error - log and skip
+            print(f"Error loading '{word}': {type(e).__name__}: {str(e)[:100]}")
+            skipped_words.append(word)
+            continue
+    
+    if not pose_data_sequences:
+        return jsonify({
+            'error': 'No pose data could be loaded from transcript',
+            'attempted_words': words,
+            'skipped_words': skipped_words
+        }), 400
     
     # Concatenate all sequences
     all_params = np.vstack(pose_data_sequences)
@@ -90,7 +138,19 @@ def asl_from_youtube():
     }
     
     animator.render_animation(pose_data, save_path=video_path, fps=15)
-    return jsonify({'url': f"/output/{video_filename}", 'words': words})
+    
+    response_data = {
+        'url': f"/output/{video_filename}",
+        'words': successful_words,
+        'total_recognized': len(words),
+        'total_processed': len(successful_words)
+    }
+    
+    if skipped_words:
+        response_data['skipped_words'] = skipped_words
+        response_data['skipped_count'] = len(skipped_words)
+    
+    return jsonify(response_data)
 
 # --- Serve generated videos ---
 @app.route('/output/<path:filename>')

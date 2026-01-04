@@ -40,14 +40,21 @@ def get_animator(model_base_path):
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
-dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu")
+dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 output_dir = os.path.join(current_dir, "output")
 models_base_dir = os.path.join(current_dir, "models") # Path to "models" directory
 os.makedirs(output_dir, exist_ok=True)
 
 with open(mapping_path, "r") as f:
     gloss_map = json.load(f)
-word_to_pkl = {v.lower(): k for k, v in gloss_map.items()}
+
+# Filter to only words with existing pickle files
+word_to_pkl = {}
+for pkl_file, word in gloss_map.items():
+    full_path = os.path.join(dataset_dir, pkl_file)
+    if os.path.exists(full_path):
+        word_to_pkl[word.lower()] = pkl_file
+
 all_words = sorted(word_to_pkl.keys())
 
 animator = get_animator(models_base_dir)
@@ -83,10 +90,19 @@ with tab1:
                         timeout=120
                     )
                     
+                    # Debug: show raw response
+                    if response.status_code != 200:
+                        st.error(f"Flask returned status {response.status_code}")
+                        st.code(response.text)
+                    
                     if response.status_code == 200:
                         result = response.json()
                         video_url = result.get("url")  # Returns "/output/filename.mp4"
                         words_found = result.get("words", [])
+                        total_recognized = result.get("total_recognized", len(words_found))
+                        total_processed = result.get("total_processed", len(words_found))
+                        skipped_words = result.get("skipped_words", [])
+                        skipped_count = result.get("skipped_count", 0)
                         
                         if video_url:
                             # Extract filename from URL
@@ -95,8 +111,26 @@ with tab1:
                             
                             if os.path.exists(video_path):
                                 st.success(f"✅ ASL animation generated successfully!")
+                                
+                                # Show processing statistics
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Recognized", total_recognized)
+                                with col2:
+                                    st.metric("Animated", total_processed)
+                                with col3:
+                                    if skipped_count > 0:
+                                        st.metric("Skipped", skipped_count, delta=f"-{skipped_count}", delta_color="inverse")
+                                    else:
+                                        st.metric("Skipped", 0)
+                                
                                 if words_found:
-                                    st.info(f"**Recognized {len(words_found)} words:** {', '.join(words_found[:10])}{'...' if len(words_found) > 10 else ''}")
+                                    st.info(f"**Animated words:** {', '.join(words_found[:15])}{'...' if len(words_found) > 15 else ''}")
+                                
+                                if skipped_words:
+                                    with st.expander(f"⚠️ {len(skipped_words)} words skipped (CUDA compatibility issues)"):
+                                        st.caption(', '.join(skipped_words))
+                                
                                 st.video(video_path)
                                 
                                 # Download button

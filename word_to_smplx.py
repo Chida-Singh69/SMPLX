@@ -1,12 +1,22 @@
 import os
-os.environ['PYOPENGL_PLATFORM'] = 'egl' # Attempt to use EGL for headless rendering
-
 import sys
+import platform
+
+# Set OpenGL platform for headless rendering based on OS
+if platform.system() == 'Linux':
+    os.environ['PYOPENGL_PLATFORM'] = 'egl'
+elif platform.system() == 'Windows':
+    # On Windows, try osmesa or leave unset to use default
+    # os.environ['PYOPENGL_PLATFORM'] = 'osmesa'  # Requires OSMesa DLL
+    pass  # Use default Windows OpenGL
+# macOS typically uses default OpenGL
 import torch
 import smplx
 import numpy as np
 import imageio
 import json
+import pickle
+import io
 from scipy.ndimage import gaussian_filter1d
 
 # Import rendering dependencies
@@ -187,10 +197,36 @@ class WordToSMPLX:
         return constrained_hand_pose
 
     def load_pose_sequence(self, pkl_path):
-        # Always load to CPU, allow for CUDA-originated files
-        with open(pkl_path, "rb") as f:
-            data = torch.load(f, map_location='cpu', weights_only=False)
-        return data
+        # Simply load with torch ignoring CUDA errors
+        import warnings
+        warnings.filterwarnings('ignore')
+        
+        try:
+            # Try normal load first
+            with open(pkl_path, 'rb') as f:
+                data = torch.load(f, map_location='cpu', weights_only=False)
+        except (RuntimeError, OSError) as e:
+            if 'CUDA' in str(e) or 'cuda' in str(e):
+                # CUDA error - skip this file
+                raise RuntimeError(f"CUDA pickle file cannot be loaded on CPU: {pkl_path}")
+            raise
+        
+        # Ensure all tensors are on CPU
+        def ensure_cpu(obj):
+            if isinstance(obj, torch.Tensor):
+                return obj.cpu() if obj.is_cuda else obj
+            elif isinstance(obj, dict):
+                return {k: ensure_cpu(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [ensure_cpu(v) for v in obj]
+            elif isinstance(obj, tuple):
+                return tuple(ensure_cpu(v) for v in obj)
+            else:
+                return obj
+        
+        return ensure_cpu(data)
+        
+        return ensure_cpu(data)
 
     def render_animation(self, pose_data, save_path=None, fps=15):
         smplx_data = pose_data.get('smplx', None)
