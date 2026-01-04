@@ -1,31 +1,21 @@
 import os
 import sys
-import platform
-
-# Set OpenGL platform for headless rendering based on OS
-if platform.system() == 'Linux':
-    os.environ['PYOPENGL_PLATFORM'] = 'egl'
-elif platform.system() == 'Windows':
-    # On Windows, try osmesa or leave unset to use default
-    # os.environ['PYOPENGL_PLATFORM'] = 'osmesa'  # Requires OSMesa DLL
-    pass  # Use default Windows OpenGL
-# macOS typically uses default OpenGL
 import torch
 import smplx
 import numpy as np
 import imageio
 import json
-import pickle
-import io
 from scipy.ndimage import gaussian_filter1d
+import trimesh
+from PIL import Image, ImageDraw
 
-# Import rendering dependencies
+# Import pyrender for 3D rendering
 try:
     import pyrender
-    import trimesh
+    PYRENDER_AVAILABLE = True
 except ImportError:
+    PYRENDER_AVAILABLE = False
     pyrender = None
-    trimesh = None
 
 # --- Joint Index Reference (SMPL-X) ---
 # 0: Global orientation
@@ -53,18 +43,30 @@ except ImportError:
 
 class WordToSMPLX:
     def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480):
-        # model_path is "models"
-        # The smplx library (when model_type='smplx') expects model_path to be the directory *containing* the 'smplx' subfolder.
-        # The actual model files are expected to be in model_path/smplx/
-        
-        # First, check if the specific model file exists as expected by the library structure
-        actual_model_file_location = os.path.join(model_path, 'smplx', f"SMPLX_{gender.upper()}.npz")
-        if not os.path.exists(actual_model_file_location):
-            raise ValueError(f"Model file not found at: {actual_model_file_location}. Please ensure models are in 'models/smplx/'")
+        # Locate SMPL-X files (support either models/smplx/*.npz or models/smplx/smplx/*.npz)
+        primary_root = model_path  # expected: models
+        primary_dir = os.path.join(primary_root, 'smplx')  # expected: models/smplx
+        primary_file = os.path.join(primary_dir, f"SMPLX_{gender.upper()}.npz")
 
+        nested_root = primary_dir  # fallback: models/smplx
+        nested_dir = os.path.join(nested_root, 'smplx')  # fallback: models/smplx/smplx
+        nested_file = os.path.join(nested_dir, f"SMPLX_{gender.upper()}.npz")
+
+        if os.path.exists(primary_file):
+            model_root = primary_root  # smplx.create will look in models/smplx
+            model_file = primary_file
+        elif os.path.exists(nested_file):
+            model_root = nested_root  # smplx.create will look in models/smplx/smplx
+            model_file = nested_file
+        else:
+            raise ValueError(
+                f"Model file not found. Checked: {primary_file} and {nested_file}. "
+                "Place SMPL-X .npz/.pkl files under models/smplx/."
+            )
+        
         self.smplx_model = smplx.create(
-            model_path=model_path,  # This should be the parent directory, e.g., "models"
-            model_type='smplx',     # This tells the library to look inside model_path + '/smplx'
+            model_path=model_root,
+            model_type='smplx',
             gender=gender,
             use_pca=False,  # Disable PCA to allow full finger control for sign language
             num_pca_comps=45,  # Full hand pose dimensions
@@ -83,182 +85,148 @@ class WordToSMPLX:
             flat_hand_mean=False,  # Allow curved hand poses for better clenching
             batch_size=1
         )
-
-        self.finger_joint_mapping = self._get_finger_joint_mapping()
-        self.hand_joint_limits = self._get_hand_joint_limits()
         
-        if pyrender and trimesh:
-            self.camera = pyrender.PerspectiveCamera(yfov=np.pi / 5.0)
-            self.light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
-            self.cam_pose = np.eye(4)
-            self.cam_pose[2, 3] = 2.0
-            self.cam_pose[1, 3] = -0.2
-            self.renderer = pyrender.OffscreenRenderer(
-                viewport_width=viewport_width,
-                viewport_height=viewport_height
-            )
-        else:
-            self.renderer = None
-
-    def _get_finger_joint_mapping(self):
-        """Map SMPL-X hand pose indices to anatomical joints for one hand (45 params)."""
-        return {
-            'thumb': {'cmc': (0, 3), 'mcp': (3, 6), 'ip': (6, 9)},
-            'index': {'mcp': (9, 12), 'pip': (12, 15), 'dip': (15, 18)},
-            'middle': {'mcp': (18, 21), 'pip': (21, 24), 'dip': (24, 27)},
-            'ring': {'mcp': (27, 30), 'pip': (30, 33), 'dip': (33, 36)},
-            'pinky': {'mcp': (36, 39), 'pip': (39, 42), 'dip': (42, 45)}
-        }
-
-    def _get_hand_joint_limits(self):
-        """Define anatomically plausible joint limits in radians."""
-        # These are simplified; real anatomy is more complex.
-        # Order for 3DoF joint params: [main_flex_ext, abd_add_or_side_flex, twist]
-        limits = {
-            # Finger MCPs (Metacarpophalangeal joints)
-            'mcp_flexion': (0, 1.57),          # 0 to 90 degrees
-            'mcp_abduction': (-0.35, 0.35),    # -20 to 20 degrees
-            'mcp_twist': (-0.2, 0.2),          # Minimal twist
-            # Finger PIPs (Proximal Interphalangeal joints)
-            'pip_flexion': (0, 1.75),          # 0 to 100 degrees
-            'pip_side_flex': (-0.1, 0.1),      # Very minimal side movement
-            'pip_twist': (-0.1, 0.1),          # Very minimal twist
-            # Finger DIPs (Distal Interphalangeal joints)
-            'dip_flexion': (0, 1.22),          # 0 to 70 degrees
-            'dip_side_flex': (-0.05, 0.05),    # Almost no side movement
-            'dip_twist': (-0.05, 0.05),        # Almost no twist
-            # Thumb - more complex, simplified here
-            'thumb_cmc_flexion': (-0.5, 0.9),  # Approx -30 to 50 deg
-            'thumb_cmc_abduction': (0, 1.22),  # 0 to 70 deg
-            'thumb_cmc_twist': (-0.5, 0.5),
-            'thumb_mcp_flexion': (-0.2, 0.9),  # Approx -10 to 50 deg
-            'thumb_mcp_abduction': (-0.1, 0.1),# Minimal abduction for thumb MCP
-            'thumb_mcp_twist': (-0.2, 0.2),
-            'thumb_ip_flexion': (-0.2, 1.4),   # Approx -10 to 80 deg
-            'thumb_ip_side_flex': (-0.1, 0.1),
-            'thumb_ip_twist': (-0.1, 0.1),
-            'general_clamp': (-np.pi, np.pi) # Fallback for unhandled DoFs
-        }
-        return limits
-
-    def _apply_anatomical_constraints_to_frame(self, hand_pose_frame_np):
-        """Applies joint limits to a single frame of hand pose (45 params)."""
-        constrained_pose = np.copy(hand_pose_frame_np)
+        self.viewport_width = viewport_width
+        self.viewport_height = viewport_height
         
-        for finger_name, joints in self.finger_joint_mapping.items():
-            for joint_type, (start_idx, end_idx) in joints.items():
-                joint_params = constrained_pose[start_idx:end_idx] # Should be 3 params
+        # Lazy initialization - only create renderer when actually rendering
+        # This avoids slow/failed initialization at startup
+        self.camera = None
+        self.light = None
+        self.cam_pose = None
+        self.renderer = None
+        self.renderer_initialized = False
+        self._renderer_init_attempted = False
 
-                if finger_name == 'thumb':
-                    if joint_type == 'cmc':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['thumb_cmc_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['thumb_cmc_abduction'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['thumb_cmc_twist'])
-                    elif joint_type == 'mcp':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['thumb_mcp_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['thumb_mcp_abduction'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['thumb_mcp_twist'])
-                    elif joint_type == 'ip':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['thumb_ip_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['thumb_ip_side_flex'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['thumb_ip_twist'])
-                else: # Index, Middle, Ring, Pinky
-                    if joint_type == 'mcp':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['mcp_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['mcp_abduction'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['mcp_twist'])
-                    elif joint_type == 'pip':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['pip_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['pip_side_flex'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['pip_twist'])
-                    elif joint_type == 'dip':
-                        joint_params[0] = np.clip(joint_params[0], *self.hand_joint_limits['dip_flexion'])
-                        joint_params[1] = np.clip(joint_params[1], *self.hand_joint_limits['dip_side_flex'])
-                        joint_params[2] = np.clip(joint_params[2], *self.hand_joint_limits['dip_twist'])
-                
-                constrained_pose[start_idx:end_idx] = joint_params
-        return constrained_pose
-
-    def _process_hand_pose_data(self, hand_pose_np, sigma=0.3):
-        """Smoothes and applies anatomical constraints to hand pose data."""
-        # 1. Smoothing
-        smoothed_hand_pose = np.copy(hand_pose_np)
-        if smoothed_hand_pose.shape[0] > 1: # Need at least 2 frames to smooth
-            for i in range(smoothed_hand_pose.shape[1]): # Iterate over 45 parameters
-                smoothed_hand_pose[:, i] = gaussian_filter1d(smoothed_hand_pose[:, i], sigma=sigma, mode='nearest')
+    @staticmethod
+    def smooth_and_clamp_hand_pose(hand_pose_np, sigma=0.3, clamp_min=-2.0, clamp_max=2.0):
+        """
+        Smoothes and clamps hand pose parameters.
         
-        # 2. Apply anatomical constraints per frame
-        constrained_hand_pose = np.zeros_like(smoothed_hand_pose)
-        for i in range(smoothed_hand_pose.shape[0]): # Iterate over frames
-            constrained_hand_pose[i, :] = self._apply_anatomical_constraints_to_frame(smoothed_hand_pose[i, :])
+        Args:
+            hand_pose_np: numpy array of shape [N, 45] containing hand pose parameters
+            sigma: Gaussian filter sigma for smoothing
+            clamp_min: Minimum value for clamping
+            clamp_max: Maximum value for clamping
             
-        # 3. Final global clamp as a safeguard (optional, could be part of _apply_anatomical_constraints_to_frame)
-        # constrained_hand_pose = np.clip(constrained_hand_pose, *self.hand_joint_limits['general_clamp'])
-        return constrained_hand_pose
+        Returns:
+            Smoothed and clamped hand pose array
+        """
+        # Smoothing
+        smoothed = np.copy(hand_pose_np)
+        if smoothed.shape[0] > 1:  # Need at least 2 frames to smooth
+            for i in range(smoothed.shape[1]):
+                smoothed[:, i] = gaussian_filter1d(smoothed[:, i], sigma=sigma, mode='nearest')
+        
+        # Clamping
+        smoothed = np.clip(smoothed, clamp_min, clamp_max)
+        return smoothed
 
-    def load_pose_sequence(self, pkl_path):
-        # Simply load with torch ignoring CUDA errors
-        import warnings
-        warnings.filterwarnings('ignore')
+    def _init_pyrender_lazy(self):
+        """Initialize pyrender only when actually needed (lazy initialization)."""
+        if self._renderer_init_attempted or not PYRENDER_AVAILABLE:
+            return
         
+        self._renderer_init_attempted = True
         try:
-            # Try normal load first
-            with open(pkl_path, 'rb') as f:
-                data = torch.load(f, map_location='cpu', weights_only=False)
-        except (RuntimeError, OSError) as e:
-            if 'CUDA' in str(e) or 'cuda' in str(e):
-                # CUDA error - skip this file
-                raise RuntimeError(f"CUDA pickle file cannot be loaded on CPU: {pkl_path}")
-            raise
+            # Camera: Perspective camera with 36-degree vertical field of view (π/5 radians)
+            self.camera = pyrender.PerspectiveCamera(yfov=np.pi / 5.0)
+            
+            # Light: Directional light with full white color and intensity 2.0
+            self.light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
+            
+            # Camera pose: 4x4 transformation matrix
+            # Position for frontal standing view with full body and hands visible
+            self.cam_pose = np.eye(4)
+            self.cam_pose[0, 3] = 0.0      # x: center (no horizontal offset)
+            self.cam_pose[1, 3] = 0.2      # y: slightly above center for better hand view
+            self.cam_pose[2, 3] = 2.5      # z: further away to avoid hand clipping
+            
+            # Offscreen renderer: renders to images (not screen display)
+            self.renderer = pyrender.OffscreenRenderer(
+                viewport_width=self.viewport_width,
+                viewport_height=self.viewport_height
+            )
+            self.renderer_initialized = True
+        except Exception as e:
+            if not hasattr(self, '_pyrender_error_printed'):
+                print(f"[INFO] Pyrender unavailable ({type(e).__name__}), using matplotlib fallback")
+                self._pyrender_error_printed = True
+            self.renderer_initialized = False
+    
+    def load_pose_sequence(self, pkl_path):
+        """
+        Load pose sequence from pickle file.
+        Always loads to CPU to ensure compatibility.
         
-        # Ensure all tensors are on CPU
-        def ensure_cpu(obj):
-            if isinstance(obj, torch.Tensor):
-                return obj.cpu() if obj.is_cuda else obj
-            elif isinstance(obj, dict):
-                return {k: ensure_cpu(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [ensure_cpu(v) for v in obj]
-            elif isinstance(obj, tuple):
-                return tuple(ensure_cpu(v) for v in obj)
-            else:
-                return obj
-        
-        return ensure_cpu(data)
-        
-        return ensure_cpu(data)
+        Args:
+            pkl_path: Path to the pickle file containing pose data
+            
+        Returns:
+            Dictionary containing pose data
+        """
+        with open(pkl_path, "rb") as f:
+            data = torch.load(f, map_location='cpu', weights_only=False)
+        return data
 
     def render_animation(self, pose_data, save_path=None, fps=15):
-        smplx_data = pose_data.get('smplx', None)
-        if smplx_data is None or not (isinstance(smplx_data, np.ndarray) and isinstance(smplx_data[0], np.ndarray)):
-            raise ValueError("'smplx' key missing or has unexpected structure in pose_data.")
-        smplx_params = np.stack(smplx_data)  # shape: [N, D]
-        N = smplx_params.shape[0]
-        global_orient = torch.tensor(smplx_params[:, 0:3], dtype=torch.float32)
-        body_pose = torch.tensor(smplx_params[:, 3:66], dtype=torch.float32)
+        """
+        Render SMPL-X animation from pose data using pyrender.
         
-        # Process hand poses
-        left_hand_raw_np = smplx_params[:, 66:111]
-        right_hand_raw_np = smplx_params[:, 111:156]
+        Args:
+            pose_data: Dictionary containing 'smplx' key with pose parameters
+            save_path: Optional path to save the video
+            fps: Frames per second for the output video
+            
+        Returns:
+            List of rendered frames
+        """
+        smplx_data = pose_data['smplx']
         
-        left_hand_processed_np = self._process_hand_pose_data(left_hand_raw_np)
-        right_hand_processed_np = self._process_hand_pose_data(right_hand_raw_np)
-        
-        left_hand_pose = torch.tensor(left_hand_processed_np, dtype=torch.float32)
-        right_hand_pose = torch.tensor(right_hand_processed_np, dtype=torch.float32)
+        # Pose Data Loading - stack numpy arrays to shape [N, D]
+        if isinstance(smplx_data, np.ndarray) and isinstance(smplx_data[0], np.ndarray):
+            smplx_params = np.stack(smplx_data)
+            N = smplx_params.shape[0]
+            
+            # Pose Parameter Extraction
+            # Global orient: 3 values controlling overall body rotation
+            global_orient = torch.tensor(smplx_params[:, 0:3], dtype=torch.float32)
+            # Body pose: 63 values (21 joints × 3 rotation values each)
+            body_pose = torch.tensor(smplx_params[:, 3:66], dtype=torch.float32)
+            # Left hand pose: 45 values for finger/hand rotation
+            left_hand_pose_np = smplx_params[:, 66:111]
+            # Right hand pose: 45 values for finger/hand rotation
+            right_hand_pose_np = smplx_params[:, 111:156]
+            
+            # Hand Pose Smoothing - Gaussian filtering to reduce jitter
+            left_hand_pose_np = self.smooth_and_clamp_hand_pose(left_hand_pose_np)
+            right_hand_pose_np = self.smooth_and_clamp_hand_pose(right_hand_pose_np)
+            
+            left_hand_pose = torch.tensor(left_hand_pose_np, dtype=torch.float32)
+            right_hand_pose = torch.tensor(right_hand_pose_np, dtype=torch.float32)
+        else:
+            raise ValueError("Unexpected structure in 'smplx' key.")
 
+        print(f"[RENDERING] Rendering {N} frames...")
         frames = []
+        
+        # Frame Generation Loop
         for i in range(N):
+            # Add 180-degree rotation around X-axis to flip model right-side up
             go = global_orient[i].unsqueeze(0).clone()
-            go[0, 0] += np.pi  # Rotate 180° around X axis
+            go[0, 0] += np.pi
+            
             bp = body_pose[i].unsqueeze(0)
             lhp = left_hand_pose[i].unsqueeze(0)
             rhp = right_hand_pose[i].unsqueeze(0)
-            # Check for NaNs in hand poses and replace with zeros if found
+            
+            # Error Handling - Replace NaN values with neutral (zero) poses
             if torch.isnan(lhp).any() or torch.isnan(rhp).any():
-                print(f"Warning: NaN detected in hand poses at frame {i}, using neutral pose")
-                lhp = torch.nan_to_num(lhp)
-                rhp = torch.nan_to_num(rhp)
+                print(f"Warning: NaN in hand poses at frame {i}, using neutral pose")
+                lhp = torch.zeros_like(lhp)
+                rhp = torch.zeros_like(rhp)
+            
+            # Call SMPL-X model with pose parameters
             try:
                 output = self.smplx_model(
                     body_pose=bp,
@@ -269,7 +237,8 @@ class WordToSMPLX:
                     return_verts=True
                 )
             except Exception as e:
-                print(f"Error in SMPL-X model at frame {i}: {e}")
+                # Fallback: regenerate frame with neutral hand poses
+                print(f"Warning: SMPL-X error at frame {i}, using neutral hands: {e}")
                 output = self.smplx_model(
                     body_pose=bp,
                     right_hand_pose=torch.zeros_like(rhp),
@@ -278,24 +247,145 @@ class WordToSMPLX:
                     betas=torch.zeros((1, 10)),
                     return_verts=True
                 )
-            if self.renderer and pyrender and trimesh:
-                vertices = output.vertices.detach().cpu().numpy().squeeze()
-                mesh = trimesh.Trimesh(vertices=vertices, faces=self.smplx_model.faces)
-                scene = pyrender.Scene()
-                mesh_pyrender = pyrender.Mesh.from_trimesh(mesh)
-                scene.add(mesh_pyrender)
-                scene.add(self.camera, pose=self.cam_pose)
-                scene.add(self.light, pose=self.cam_pose)
-                color, _ = self.renderer.render(scene)
-                frames.append(color)
-            else:
-                print("Rendering not available. Returning pose parameters only.")
-                return output
-        if save_path:
+            
+            # Get 3D vertex positions
+            vertices = output.vertices.detach().cpu().numpy().squeeze()
+            
+            # Create trimesh from vertices and SMPL-X face connectivity
+            mesh = trimesh.Trimesh(vertices=vertices, faces=self.smplx_model.faces)
+            
+            # Render frame using pyrender (primary) or trimesh (fallback)
+            frame = self._render_pyrender_frame(mesh)
+            if frame is not None:
+                frames.append(frame)
+            
+            if (i + 1) % 10 == 0:
+                print(f"  Rendered {i + 1}/{N} frames")
+        
+        print(f"✓ Rendering complete!")
+        
+        # Video Encoding - save to MP4 using imageio
+        if save_path and frames:
+            print(f"[SAVING] Saving video to {save_path}...")
             imageio.mimsave(save_path, frames, fps=fps)
+            print(f"[SUCCESS] Video saved!")
+            
         return frames
-
+    
+    def _render_pyrender_frame(self, mesh):
+        """
+        Render a single frame using pyrender.
+        
+        Args:
+            mesh: trimesh.Trimesh object with vertices and faces
+            
+        Returns:
+            np.ndarray: RGB image (640x480x3) or None if rendering fails
+        """
+        # Initialize pyrender on first render (lazy)
+        if not self._renderer_init_attempted:
+            self._init_pyrender_lazy()
+        
+        if not PYRENDER_AVAILABLE or not self.renderer_initialized or self.renderer is None:
+            return self._render_trimesh_frame_fallback(mesh)
+        
+        try:
+            # Create pyrender Mesh from trimesh
+            pyrender_mesh = pyrender.Mesh.from_trimesh(mesh)
+            
+            # Create scene and add components
+            scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0, 1.0])  # White background
+            scene.add(pyrender_mesh)
+            scene.add(self.camera, pose=self.cam_pose)
+            scene.add(self.light, pose=self.cam_pose)
+            
+            # Render to offscreen buffer
+            color, depth = self.renderer.render(scene)
+            
+            # Return RGB image (discard alpha channel if present)
+            if color.shape[2] == 4:
+                return color[:, :, :3]
+            return color
+            
+        except Exception as e:
+            # Only print once to avoid spam
+            if not hasattr(self, '_render_error_printed'):
+                print(f"[INFO] Pyrender rendering unavailable, using matplotlib fallback")
+                self._render_error_printed = True
+            return self._render_trimesh_frame_fallback(mesh)
+    
+    def _render_trimesh_frame_fallback(self, mesh):
+        """Render a frame using matplotlib 3D plotting as fallback."""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend
+            import matplotlib.pyplot as plt
+            from mpl_toolkits.mplot3d import Axes3D
+            from io import BytesIO
+            
+            # Create figure
+            fig = plt.figure(figsize=(self.viewport_width/100, self.viewport_height/100), dpi=100)
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Get vertices
+            vertices = mesh.vertices
+            faces = mesh.faces
+            
+            # Plot the mesh
+            ax.plot_trisurf(vertices[:, 0], vertices[:, 1], vertices[:, 2],
+                           triangles=faces, color='lightblue', alpha=0.8, edgecolor='none')
+            
+            # Set viewing angle for frontal standing view
+            ax.view_init(elev=0, azim=0)  # Front view, no tilt
+            ax.set_xlim([-1, 1])
+            ax.set_ylim([-1, 1])
+            ax.set_zlim([-1, 1])
+            ax.set_box_aspect([1,1,1])
+            
+            # Remove axes for cleaner look
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_zticks([])
+            ax.grid(False)
+            ax.set_facecolor('white')
+            fig.patch.set_facecolor('white')
+            
+            # Render to buffer
+            buf = BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, facecolor='white')
+            buf.seek(0)
+            
+            # Load as array
+            img = Image.open(buf)
+            img = img.resize((self.viewport_width, self.viewport_height))
+            frame = np.array(img.convert('RGB'))
+            
+            plt.close(fig)
+            buf.close()
+            
+            return frame
+            
+        except Exception as e:
+            if not hasattr(self, '_fallback_error_printed'):
+                print(f"[WARNING] Matplotlib fallback also failed: {e}")
+                print("[INFO] Using simple placeholder")
+                self._fallback_error_printed = True
+            
+            # Ultimate fallback: simple colored frame
+            img = Image.new('RGB', (self.viewport_width, self.viewport_height), color=(240, 240, 240))
+            draw = ImageDraw.Draw(img)
+            text = "3D Rendering"
+            draw.text((self.viewport_width//2 - 50, self.viewport_height//2), text, fill=(100, 100, 100))
+            return np.array(img)
+    
 def convert_to_cpu(input_path, output_path):
+    """
+    Convert a pickle file from CUDA to CPU-compatible format.
+    
+    Args:
+        input_path: Path to input pickle file
+        output_path: Path to save CPU-compatible pickle file
+    """
     with open(input_path, "rb") as f:
         data = torch.load(f, map_location='cpu', weights_only=False)
     for k in data:
@@ -303,17 +393,28 @@ def convert_to_cpu(input_path, output_path):
             data[k] = data[k].cpu()
     torch.save(data, output_path)
 
+
 def mirror_pose(pose):
+    """
+    Mirror a pose by flipping Y and Z axes.
+    
+    Args:
+        pose: Torch tensor containing pose parameters
+        
+    Returns:
+        Mirrored pose tensor
+    """
     mirrored = pose.clone()
     mirrored[..., 1::3] *= -1  # Flip Y
     mirrored[..., 2::3] *= -1  # Flip Z
     return mirrored
 
+
 if __name__ == "__main__":
-    print("Word to SMPL-X Animation Generator (Cleaned)")
+    print("Word to SMPL-X Animation Generator")
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(current_dir, "models")
-    dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu")  # Use the CPU-only dataset
+    dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu")
     mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
     
     # Load mapping
@@ -329,7 +430,7 @@ if __name__ == "__main__":
     print("Available words:")
     print(", ".join(sorted(word_to_pkl.keys())))
     
-    word = input("Enter a word (e.g., april, announce): ").strip().lower()
+    word = input("\nEnter a word (e.g., april, announce): ").strip().lower()
     
     try:
         if word not in word_to_pkl:
@@ -341,9 +442,7 @@ if __name__ == "__main__":
         
         # Debug: Print keys and types
         print("Pose data keys:", pose_data.keys())
-        print("global_orient:", type(pose_data.get('global_orient')))
-        print("body_pose:", type(pose_data.get('body_pose')))
-        print("right_hand_pose:", type(pose_data.get('right_hand_pose')))
+        print("Type of smplx data:", type(pose_data.get('smplx')))
         
         # Save animation
         output_dir = os.path.join(current_dir, "output")
@@ -351,9 +450,9 @@ if __name__ == "__main__":
         output_path = os.path.join(output_dir, f"{word}_animation.mp4")
         
         animator.render_animation(pose_data, save_path=output_path, fps=15)
-        print(f"Animation saved to: {output_path}")
+        print(f"\n✅ Animation saved to: {output_path}")
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()

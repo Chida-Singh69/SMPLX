@@ -14,6 +14,7 @@ env/
 output/
 models/
 datasett/
+how2sign_pkls_cropTrue_shapeFalse
 
 # Documentation (optional - remove these lines if you want to commit docs)
 pdf_part_1.md

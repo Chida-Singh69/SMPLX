@@ -8,41 +8,22 @@ import numpy as np
 import tempfile
 import requests
 
-# --- Pose Blending Function ---
-def blend_pose_sequences(seq_a, seq_b, n_blend=5):
-    # seq_a, seq_b: [N, D] numpy arrays of SMPL-X parameters
-    if n_blend == 0 or len(seq_a) < n_blend or len(seq_b) < n_blend:
-        return np.vstack([seq_a, seq_b])
-    
-    blended_part = []
-    for i in range(n_blend):
-        alpha = (i + 1) / (n_blend + 1)  # Alpha from near 0 to near 1
-        # Linear interpolation for all 156 parameters
-        current_blend = (1 - alpha) * seq_a[-n_blend + i, :] + alpha * seq_b[i, :]
-        blended_part.append(current_blend)
-    
-    if not blended_part: # Should not happen if n_blend > 0 and sequences are long enough
-        return np.vstack([seq_a, seq_b])
-        
-    blended_part_np = np.array(blended_part)
-    
-    # Concatenate: part of A, blended part, part of B
-    return np.vstack([seq_a[:-n_blend, :], blended_part_np, seq_b[n_blend:, :]])
-
 st.set_page_config(page_title="SMPL-X Animation Demo", layout="centered")
 st.title("🤟 ASL Overlay - Sign Language Animation")
 
 # --- Configuration and Setup ---
 FLASK_API_URL = "http://localhost:5000"  # Flask backend URL
-@st.cache_resource # Cache the animator resource
-def get_animator(model_base_path):
+
+@st.cache_resource(hash_funcs={WordToSMPLX: id})  # Cache with version tracking
+def get_animator(model_base_path, version="v2_pyrender"):
+    """Load animator with version tracking to force cache refresh when code changes."""
     return WordToSMPLX(model_path=model_base_path)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
 dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 output_dir = os.path.join(current_dir, "output")
-models_base_dir = os.path.join(current_dir, "models") # Path to "models" directory
+models_base_dir = os.path.join(current_dir, "models")
 os.makedirs(output_dir, exist_ok=True)
 
 with open(mapping_path, "r") as f:
@@ -56,8 +37,7 @@ for pkl_file, word in gloss_map.items():
         word_to_pkl[word.lower()] = pkl_file
 
 all_words = sorted(word_to_pkl.keys())
-
-animator = get_animator(models_base_dir)
+animator = get_animator(models_base_dir, version="v2_pyrender")
 
 # --- Tabs for Different Modes ---
 tab1, tab2 = st.tabs(["📺 YouTube Video", "📝 Word Selection"])
@@ -90,14 +70,9 @@ with tab1:
                         timeout=120
                     )
                     
-                    # Debug: show raw response
-                    if response.status_code != 200:
-                        st.error(f"Flask returned status {response.status_code}")
-                        st.code(response.text)
-                    
                     if response.status_code == 200:
                         result = response.json()
-                        video_url = result.get("url")  # Returns "/output/filename.mp4"
+                        video_url = result.get("url")
                         words_found = result.get("words", [])
                         total_recognized = result.get("total_recognized", len(words_found))
                         total_processed = result.get("total_processed", len(words_found))
@@ -168,7 +143,7 @@ with tab1:
     """)
 
 # ============================================
-# TAB 2: WORD SELECTION (Original functionality)
+# TAB 2: WORD SELECTION
 # ============================================
 with tab2:
     st.markdown("### Select Word(s) for Animation")
@@ -178,85 +153,80 @@ with tab2:
         help="Animations will be played in the order of selection if multiple words are chosen."
     )
 
-    if 'video_path_to_display' not in st.session_state:
-        st.session_state.video_path_to_display = None
-    if 'video_header' not in st.session_state:
-        st.session_state.video_header = ""
-
     if st.button("✨ Generate Animation", type="primary", key="word_btn"):
         if not selected_words:
             st.warning("Please select at least one word to animate.")
-            st.session_state.video_path_to_display = None
         else:
-            st.session_state.video_path_to_display = None
             with st.spinner(f"Generating animation for {', '.join(selected_words)}... This might take a moment."):
-                pose_data_sequences = []
-                for word in selected_words:
-                    pkl_file = os.path.join(dataset_dir, word_to_pkl[word])
-                    try:
-                        pose_data_dict = animator.load_pose_sequence(pkl_file)
-                        smplx_params_np = np.stack(pose_data_dict['smplx'])
-                        pose_data_sequences.append(smplx_params_np)
-                    except Exception as e:
-                        st.error(f"Error loading pose data for '{word}': {e}")
-                        pose_data_sequences = []
-                        break
-                if pose_data_sequences:
-                    if len(selected_words) == 1:
-                        video_filename = f"{selected_words[0]}_animation.mp4"
+                try:
+                    video_paths = []
+                    
+                    # Generate individual videos
+                    for word in selected_words:
+                        video_filename = f"{word}_animation.mp4"
                         video_path = os.path.join(output_dir, video_filename)
+                        
+                        # Only render if video doesn't exist
                         if not os.path.exists(video_path):
-                            pose_data = animator.load_pose_sequence(os.path.join(dataset_dir, word_to_pkl[selected_words[0]]))
-                            animator.render_animation(pose_data, save_path=video_path, fps=15)
-                        st.session_state.video_path_to_display = video_path
-                        st.session_state.video_header = f"Animation for: {selected_words[0]}"
+                            pkl_file = os.path.join(dataset_dir, word_to_pkl[word])
+                            pose_data = animator.load_pose_sequence(pkl_file)
+                            result = animator.render_animation(pose_data, save_path=video_path, fps=15)
+                            
+                            if result is None:
+                                st.warning(f"⚠️ OpenGL rendering unavailable for '{word}'. Pose data loaded successfully but video generation skipped.")
+                                continue
+                        
+                        if os.path.exists(video_path):
+                            video_paths.append(video_path)
+                    
+                    if not video_paths:
+                        st.error("No videos could be generated. OpenGL rendering may be unavailable.")
+                    elif len(video_paths) == 1:
+                        # Single video - display directly
+                        st.success(f"✅ Animation generated for: {selected_words[0]}")
+                        st.video(video_paths[0])
+                        
+                        with open(video_paths[0], "rb") as file:
+                            st.download_button(
+                                label="⬇️ Download Video",
+                                data=file,
+                                file_name=os.path.basename(video_paths[0]),
+                                mime="video/mp4"
+                            )
                     else:
-                        # Concatenate videos in memory using imageio and tempfile
+                        # Multiple videos - concatenate
+                        combined_filename = f"combined_{'_'.join(selected_words[:3])}.mp4"
+                        combined_path = os.path.join(output_dir, combined_filename)
+                        
                         all_frames = []
-                        for word in selected_words:
-                            video_filename = f"{word}_animation.mp4"
-                            video_path = os.path.join(output_dir, video_filename)
-                            if not os.path.exists(video_path):
-                                pose_data = animator.load_pose_sequence(os.path.join(dataset_dir, word_to_pkl[word]))
-                                animator.render_animation(pose_data, save_path=video_path, fps=15)
-                            if os.path.exists(video_path):
-                                reader = imageio.get_reader(video_path)
-                                all_frames.extend([frame for frame in reader])
-                                reader.close()
-                            else:
-                                st.error(f"Video for '{word}' could not be found or rendered.")
-                        if all_frames:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmpfile:
-                                imageio.mimsave(tmpfile.name, all_frames, fps=15)
-                                st.session_state.video_path_to_display = tmpfile.name
-                                st.session_state.video_header = f"Combined Animation: {', '.join(selected_words)}"
-                        else:
-                            st.session_state.video_path_to_display = None
-                            st.session_state.video_header = ""
-
-    # Video display logic
-    video_path = st.session_state.video_path_to_display
-    if video_path and os.path.exists(video_path):
-        st.markdown(f"### {st.session_state.video_header}")
-        st.video(video_path)
-        with open(video_path, "rb") as file:
-            st.download_button(
-                label="Download Video",
-                data=file,
-                file_name=os.path.basename(video_path),
-                mime="video/mp4"
-            )
-        if st.button("Clear Output"):
-            st.session_state.video_path_to_display = None
-            st.session_state.video_header = ""
-            st.experimental_rerun()
-    else:
-        if video_path:  # Only show error if a path was set
-            st.error(f"Video file not found or could not be opened: {video_path}")
-
+                        for path in video_paths:
+                            reader = imageio.get_reader(path)
+                            all_frames.extend([frame for frame in reader])
+                            reader.close()
+                        
+                        imageio.mimsave(combined_path, all_frames, fps=15)
+                        
+                        st.success(f"✅ Combined animation generated for: {', '.join(selected_words)}")
+                        st.video(combined_path)
+                        
+                        with open(combined_path, "rb") as file:
+                            st.download_button(
+                                label="⬇️ Download Combined Video",
+                                data=file,
+                                file_name=combined_filename,
+                                mime="video/mp4"
+                            )
+                            
+                except Exception as e:
+                    st.error(f"❌ Error generating animation: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+    
     st.markdown("---")
-    st.markdown("**Instructions:**\
-    1. Select one or more words from the list.\
-    2. Click '✨ Generate Animation'.\
-    3. Watch the animation. If multiple words are selected, they will be concatenated and played as a single video.\
-    4. You can download the generated video or clear the output.") 
+    st.markdown("""
+    **Instructions:**
+    1. Select one or more words from the list
+    2. Click '✨ Generate Animation'
+    3. Watch the animation. If multiple words are selected, they will be concatenated
+    4. Download the generated video if needed
+    """)
