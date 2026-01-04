@@ -1,11 +1,6 @@
 import streamlit as st
 import os
 import json
-import subprocess
-from word_to_smplx import WordToSMPLX
-import imageio
-import numpy as np
-import tempfile
 import requests
 
 st.set_page_config(page_title="SMPL-X Animation Demo", layout="centered")
@@ -14,16 +9,10 @@ st.title("🤟 ASL Overlay - Sign Language Animation")
 # --- Configuration and Setup ---
 FLASK_API_URL = "http://localhost:5000"  # Flask backend URL
 
-@st.cache_resource(hash_funcs={WordToSMPLX: id})  # Cache with version tracking
-def get_animator(model_base_path, version="v2_pyrender"):
-    """Load animator with version tracking to force cache refresh when code changes."""
-    return WordToSMPLX(model_path=model_base_path)
-
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
 dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 output_dir = os.path.join(current_dir, "output")
-models_base_dir = os.path.join(current_dir, "models")
 os.makedirs(output_dir, exist_ok=True)
 
 with open(mapping_path, "r") as f:
@@ -37,7 +26,6 @@ for pkl_file, word in gloss_map.items():
         word_to_pkl[word.lower()] = pkl_file
 
 all_words = sorted(word_to_pkl.keys())
-animator = get_animator(models_base_dir, version="v2_pyrender")
 
 # --- Tabs for Different Modes ---
 tab1, tab2 = st.tabs(["📺 YouTube Video", "📝 Word Selection"])
@@ -159,68 +147,37 @@ with tab2:
         else:
             with st.spinner(f"Generating animation for {', '.join(selected_words)}... This might take a moment."):
                 try:
-                    video_paths = []
+                    # Call Flask API to generate video
+                    response = requests.post(
+                        f"{FLASK_API_URL}/asl_stream",
+                        json={"words": selected_words},
+                        timeout=60
+                    )
                     
-                    # Generate individual videos
-                    for word in selected_words:
-                        video_filename = f"{word}_animation.mp4"
-                        video_path = os.path.join(output_dir, video_filename)
+                    if response.status_code == 200:
+                        st.success(f"✅ Animation generated for: {', '.join(selected_words)}")
                         
-                        # Only render if video doesn't exist
-                        if not os.path.exists(video_path):
-                            pkl_file = os.path.join(dataset_dir, word_to_pkl[word])
-                            pose_data = animator.load_pose_sequence(pkl_file)
-                            result = animator.render_animation(pose_data, save_path=video_path, fps=15)
-                            
-                            if result is None:
-                                st.warning(f"⚠️ OpenGL rendering unavailable for '{word}'. Pose data loaded successfully but video generation skipped.")
-                                continue
+                        # Display video inline
+                        st.video(response.content)
                         
-                        if os.path.exists(video_path):
-                            video_paths.append(video_path)
-                    
-                    if not video_paths:
-                        st.error("No videos could be generated. OpenGL rendering may be unavailable.")
-                    elif len(video_paths) == 1:
-                        # Single video - display directly
-                        st.success(f"✅ Animation generated for: {selected_words[0]}")
-                        st.video(video_paths[0])
-                        
-                        with open(video_paths[0], "rb") as file:
-                            st.download_button(
-                                label="⬇️ Download Video",
-                                data=file,
-                                file_name=os.path.basename(video_paths[0]),
-                                mime="video/mp4"
-                            )
+                        # Download button
+                        video_filename = f"{'_'.join(selected_words[:3])}_animation.mp4"
+                        st.download_button(
+                            label="⬇️ Download Video",
+                            data=response.content,
+                            file_name=video_filename,
+                            mime="video/mp4"
+                        )
                     else:
-                        # Multiple videos - concatenate
-                        combined_filename = f"combined_{'_'.join(selected_words[:3])}.mp4"
-                        combined_path = os.path.join(output_dir, combined_filename)
+                        error_data = response.json()
+                        st.error(f"❌ Error: {error_data.get('error', 'Unknown error')}")
                         
-                        all_frames = []
-                        for path in video_paths:
-                            reader = imageio.get_reader(path)
-                            all_frames.extend([frame for frame in reader])
-                            reader.close()
-                        
-                        imageio.mimsave(combined_path, all_frames, fps=15)
-                        
-                        st.success(f"✅ Combined animation generated for: {', '.join(selected_words)}")
-                        st.video(combined_path)
-                        
-                        with open(combined_path, "rb") as file:
-                            st.download_button(
-                                label="⬇️ Download Combined Video",
-                                data=file,
-                                file_name=combined_filename,
-                                mime="video/mp4"
-                            )
-                            
+                except requests.exceptions.Timeout:
+                    st.error("❌ Request timed out. The server may be busy.")
+                except requests.exceptions.ConnectionError:
+                    st.error("❌ Could not connect to Flask API. Make sure it's running on port 5000.")
                 except Exception as e:
                     st.error(f"❌ Error generating animation: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
     
     st.markdown("---")
     st.markdown("""

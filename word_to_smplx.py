@@ -314,6 +314,43 @@ class WordToSMPLX:
                 self._render_error_printed = True
             return self._render_trimesh_frame_fallback(mesh)
     
+    def render_animation_to_bytes(self, pose_data, fps=15):
+        """Render animation directly to bytes without saving to disk."""
+        import io
+        try:
+            frames = self.render_animation(pose_data, save_path=None, fps=fps)
+            buffer = io.BytesIO()
+            imageio.mimsave(buffer, frames, fps=fps, format='mp4')
+            buffer.seek(0)
+            video_bytes = buffer.getvalue()
+            
+            # Clean up frames from memory
+            del frames
+            buffer.close()
+            
+            # Clean up renderer to prevent OpenGL context corruption
+            if self.renderer is not None:
+                try:
+                    self.renderer.delete()
+                except:
+                    pass
+                self.renderer = None
+                self.renderer_initialized = False
+                self._renderer_init_attempted = False
+            
+            return video_bytes
+        except Exception as e:
+            # Clean up on error
+            if self.renderer is not None:
+                try:
+                    self.renderer.delete()
+                except:
+                    pass
+                self.renderer = None
+                self.renderer_initialized = False
+                self._renderer_init_attempted = False
+            raise
+    
     def _render_trimesh_frame_fallback(self, mesh):
         """Render a frame using matplotlib 3D plotting as fallback."""
         try:

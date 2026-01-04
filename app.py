@@ -152,6 +152,77 @@ def asl_from_youtube():
     
     return jsonify(response_data)
 
+# --- Endpoint: Stream ASL video (no disk save) ---
+@app.route('/asl_stream', methods=['POST'])
+def asl_stream():
+    from flask import Response
+    from io import StringIO
+    
+    try:
+        data = request.get_json()
+        words = data.get('words', [])
+        
+        if not words:
+            return jsonify({'error': 'No words provided'}), 400
+        
+        # Validate words
+        invalid_words = [w for w in words if w.lower() not in dataset_words]
+        if invalid_words:
+            return jsonify({'error': f'Invalid words: {", ".join(invalid_words)}'}), 400
+        
+        # Load and concatenate pose data
+        pose_data_sequences = []
+        successful_words = []
+        
+        for word in words:
+            try:
+                pkl_file = os.path.join(dataset_dir, word_to_pkl[word.lower()])
+                
+                # Suppress warnings
+                import sys
+                old_stderr = sys.stderr
+                sys.stderr = StringIO()
+                
+                try:
+                    pose_data_dict = animator.load_pose_sequence(pkl_file)
+                    smplx_params_np = np.stack(pose_data_dict['smplx'])
+                    pose_data_sequences.append(smplx_params_np)
+                    successful_words.append(word)
+                finally:
+                    sys.stderr = old_stderr
+                    
+            except Exception as e:
+                print(f"Error loading '{word}': {type(e).__name__}: {str(e)[:100]}")
+                continue
+        
+        if not pose_data_sequences:
+            return jsonify({'error': 'No pose data could be loaded'}), 400
+        
+        # Concatenate all sequences
+        all_params = np.vstack(pose_data_sequences)
+        
+        # Create pose_data structure
+        pose_data = {
+            'smplx': all_params,
+            'gender': 'neutral',
+            'fps': 15
+        }
+        
+        # Render to bytes (in-memory)
+        print(f"[STREAM] Rendering {len(successful_words)} word(s): {', '.join(successful_words)}")
+        print(f"[STREAM] Total frames: {all_params.shape[0]}")
+        
+        video_bytes = animator.render_animation_to_bytes(pose_data, fps=15)
+        
+        print(f"[STREAM] Video generated: {len(video_bytes)} bytes")
+        return Response(video_bytes, mimetype='video/mp4')
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR] Stream endpoint failed: {error_trace}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
+
 # --- Serve generated videos ---
 @app.route('/output/<path:filename>')
 def download_file(filename):
