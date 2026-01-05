@@ -43,18 +43,95 @@ with tab1:
         help="Enter a valid YouTube video URL with available captions/transcript"
     )
     
-    if st.button("🎬 Translate Video", key="youtube_btn", type="primary"):
+    # Step 1: Extract transcript
+    if st.button("📥 Extract Transcript", key="extract_btn", type="secondary"):
         if not youtube_url:
             st.warning("Please enter a YouTube URL.")
         elif "youtube.com" not in youtube_url and "youtu.be" not in youtube_url:
             st.error("Please enter a valid YouTube URL.")
         else:
-            with st.spinner("🔄 Extracting transcript and generating ASL animation... This may take 30-60 seconds."):
+            with st.spinner("📥 Extracting transcript from YouTube..."):
+                try:
+                    response = requests.post(
+                        f"{FLASK_API_URL}/extract_transcript",
+                        json={"url": youtube_url},
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        # Store in session state
+                        st.session_state['transcript_data'] = result
+                        st.session_state['youtube_url'] = youtube_url
+                        
+                        st.success("✅ Transcript extracted successfully!")
+                        st.rerun()
+                    else:
+                        error_msg = response.json().get("error", "Unknown error")
+                        st.error(f"❌ {error_msg}")
+                        
+                except requests.exceptions.Timeout:
+                    st.error("⏱️ Request timed out.")
+                except requests.exceptions.ConnectionError:
+                    st.error("🔌 Cannot connect to Flask backend on port 5000.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+    
+    # Display extracted transcript if available
+    if 'transcript_data' in st.session_state:
+        transcript_data = st.session_state['transcript_data']
+        
+        st.markdown("---")
+        st.markdown("### 📝 Extracted Transcript")
+        
+        # Show statistics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Words", transcript_data['total_words'])
+        with col2:
+            st.metric("✅ Available", transcript_data['available_count'])
+        with col3:
+            st.metric("❌ Missing", transcript_data['missing_count'])
+        
+        # Show full transcript in expandable section
+        with st.expander("📄 Full Transcript Text", expanded=False):
+            st.text_area("Transcript", transcript_data['transcript'], height=150, disabled=True)
+        
+        # Show word-by-word breakdown
+        with st.expander("🔍 Word-by-Word Analysis", expanded=True):
+            st.markdown("**Legend:** 🟢 Available in dataset | 🔴 Not in dataset")
+            
+            word_mapping = transcript_data['word_mapping']
+            html_words = []
+            for word_info in word_mapping:
+                if word_info['status'] == 'available':
+                    html_words.append(
+                        f'<span style="background-color: #d4edda; color: #155724; padding: 2px 6px; '
+                        f'margin: 2px; border-radius: 3px; display: inline-block;">🟢 {word_info["original"]}</span>'
+                    )
+                else:
+                    html_words.append(
+                        f'<span style="background-color: #f8d7da; color: #721c24; padding: 2px 6px; '
+                        f'margin: 2px; border-radius: 3px; display: inline-block;">🔴 {word_info["original"]}</span>'
+                    )
+            
+            st.markdown(' '.join(html_words), unsafe_allow_html=True)
+        
+        # Show available words list
+        if transcript_data['unique_available']:
+            st.info(f"**Words to be animated:** {', '.join(transcript_data['unique_available'][:20])}" + 
+                   ('...' if len(transcript_data['unique_available']) > 20 else ''))
+        
+        # Step 2: Generate video
+        st.markdown("---")
+        if st.button("🎬 Generate ASL Animation", key="youtube_btn", type="primary"):
+            with st.spinner("🔄 Generating ASL animation... This may take 30-60 seconds."):
                 try:
                     # Call Flask API endpoint
                     response = requests.post(
                         f"{FLASK_API_URL}/asl_from_youtube",
-                        json={"url": youtube_url},
+                        json={"url": st.session_state['youtube_url']},
                         timeout=120
                     )
                     
@@ -62,10 +139,6 @@ with tab1:
                         result = response.json()
                         video_url = result.get("url")
                         words_found = result.get("words", [])
-                        total_recognized = result.get("total_recognized", len(words_found))
-                        total_processed = result.get("total_processed", len(words_found))
-                        skipped_words = result.get("skipped_words", [])
-                        skipped_count = result.get("skipped_count", 0)
                         
                         if video_url:
                             # Extract filename from URL
@@ -73,27 +146,9 @@ with tab1:
                             video_path = os.path.join(output_dir, video_filename)
                             
                             if os.path.exists(video_path):
-                                st.success(f"✅ ASL animation generated successfully!")
+                                st.success(f"✅ ASL video generated successfully!")
                                 
-                                # Show processing statistics
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Recognized", total_recognized)
-                                with col2:
-                                    st.metric("Animated", total_processed)
-                                with col3:
-                                    if skipped_count > 0:
-                                        st.metric("Skipped", skipped_count, delta=f"-{skipped_count}", delta_color="inverse")
-                                    else:
-                                        st.metric("Skipped", 0)
-                                
-                                if words_found:
-                                    st.info(f"**Animated words:** {', '.join(words_found[:15])}{'...' if len(words_found) > 15 else ''}")
-                                
-                                if skipped_words:
-                                    with st.expander(f"⚠️ {len(skipped_words)} words skipped (CUDA compatibility issues)"):
-                                        st.caption(', '.join(skipped_words))
-                                
+                                st.markdown("### 🎥 Generated ASL Animation")
                                 st.video(video_path)
                                 
                                 # Download button
@@ -113,10 +168,9 @@ with tab1:
                         st.error(f"❌ Error: {error_msg}")
                         
                 except requests.exceptions.Timeout:
-                    st.error("⏱️ Request timed out. The video might be too long or the server is busy.")
+                    st.error("⏱️ Request timed out. The video might be too long.")
                 except requests.exceptions.ConnectionError:
                     st.error("🔌 Cannot connect to Flask backend. Make sure Flask is running on port 5000.")
-                    st.info("Run this command: `.\.venv\Scripts\python app.py`")
                 except Exception as e:
                     st.error(f"❌ An error occurred: {str(e)}")
     

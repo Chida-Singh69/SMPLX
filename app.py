@@ -56,6 +56,63 @@ def transcript_to_words(transcript_list):
                 words.append(w_clean)
     return words
 
+def extract_full_transcript_text(transcript_list):
+    """Extract full transcript text for display"""
+    return ' '.join([entry.text if hasattr(entry, 'text') else str(entry) for entry in transcript_list])
+
+def create_word_mapping(transcript_list, dataset_words):
+    """Create detailed word-by-word mapping with status"""
+    word_map = []
+    for entry in transcript_list:
+        text = entry.text if hasattr(entry, 'text') else str(entry)
+        for raw_word in text.split():
+            word_clean = raw_word.lower().strip(string.punctuation)
+            if word_clean:  # Skip empty strings
+                status = 'available' if word_clean in dataset_words else 'missing'
+                word_map.append({
+                    'original': raw_word,
+                    'clean': word_clean,
+                    'status': status
+                })
+    return word_map
+
+# --- Endpoint: Extract transcript only (preview) ---
+@app.route('/extract_transcript', methods=['POST'])
+def extract_transcript():
+    """Extract and analyze transcript without generating video"""
+    data = request.get_json()
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'Missing YouTube URL'}), 400
+    
+    try:
+        video_id = extract_video_id(url)
+        api = YouTubeTranscriptApi()
+        transcript_list = api.fetch(video_id)
+    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
+        return jsonify({'error': f'No transcript available for this video: {str(e)}'}), 404
+    except Exception as e:
+        return jsonify({'error': f'Error fetching transcript: {str(e)}'}), 500
+    
+    # Extract full transcript text and create word mapping
+    full_transcript = extract_full_transcript_text(transcript_list)
+    word_mapping = create_word_mapping(transcript_list, dataset_words)
+    
+    # Count statistics
+    available_words = [w for w in word_mapping if w['status'] == 'available']
+    missing_words = [w for w in word_mapping if w['status'] == 'missing']
+    unique_available = list(dict.fromkeys([w['clean'] for w in available_words]))
+    
+    return jsonify({
+        'transcript': full_transcript,
+        'word_mapping': word_mapping,
+        'total_words': len(word_mapping),
+        'available_count': len(available_words),
+        'missing_count': len(missing_words),
+        'unique_available': unique_available,
+        'video_id': video_id
+    })
+
 # --- Endpoint: Get transcript from YouTube ---
 @app.route('/asl_from_youtube', methods=['POST'])
 def asl_from_youtube():
@@ -72,9 +129,17 @@ def asl_from_youtube():
     except Exception as e:
         return jsonify({'error': f'Error fetching transcript: {str(e)}'}), 500
 
+    # Extract full transcript text and create word mapping
+    full_transcript = extract_full_transcript_text(transcript_list)
+    word_mapping = create_word_mapping(transcript_list, dataset_words)
+    
     words = transcript_to_words(transcript_list)
     if not words:
-        return jsonify({'error': 'No recognizable ASL words found in transcript.'}), 400
+        return jsonify({
+            'error': 'No recognizable ASL words found in transcript.',
+            'transcript': full_transcript,
+            'word_mapping': word_mapping
+        }), 400
 
     video_filename = f"{'_'.join(words[:5])}_asl.mp4"  # Limit filename length
     video_path = os.path.join(output_dir, video_filename)
@@ -143,7 +208,9 @@ def asl_from_youtube():
         'url': f"/output/{video_filename}",
         'words': successful_words,
         'total_recognized': len(words),
-        'total_processed': len(successful_words)
+        'total_processed': len(successful_words),
+        'transcript': full_transcript,
+        'word_mapping': word_mapping
     }
     
     if skipped_words:
