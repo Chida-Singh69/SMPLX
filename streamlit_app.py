@@ -27,8 +27,28 @@ for pkl_file, word in gloss_map.items():
 
 all_words = sorted(word_to_pkl.keys())
 
+# Load sentence-level dataset (How2Sign)
+sentence_mapping_path = os.path.join(current_dir, "how2sign_mapping.json")
+sentence_dataset_dir = os.path.join(current_dir, "how2sign_pkls_cropTrue_shapeFalse")
+
+sentence_to_pkl = {}
+if os.path.exists(sentence_mapping_path):
+    with open(sentence_mapping_path, "r", encoding='utf-8') as f:
+        sentence_gloss_map = json.load(f)
+    
+    # Create searchable mapping
+    for pkl_file, sentence in sentence_gloss_map.items():
+        full_path = os.path.join(sentence_dataset_dir, pkl_file)
+        if os.path.exists(full_path):
+            # Truncate long sentences for display
+            display_text = sentence[:100] + "..." if len(sentence) > 100 else sentence
+            sentence_to_pkl[display_text] = {
+                "pkl": pkl_file,
+                "full_text": sentence
+            }
+
 # --- Tabs for Different Modes ---
-tab1, tab2 = st.tabs(["📺 YouTube Video", "📝 Word Selection"])
+tab1, tab2, tab3 = st.tabs(["📺 YouTube Video", "📝 Word Selection", "📖 Sentence Animations"])
 
 # ============================================
 # TAB 1: YOUTUBE VIDEO TRANSLATION
@@ -64,7 +84,7 @@ with tab1:
                         # Store in session state
                         st.session_state['transcript_data'] = result
                         st.session_state['youtube_url'] = youtube_url
-                        
+                        st.session_state['transcript_extracted'] = True
                         st.success("✅ Transcript extracted successfully!")
                         st.rerun()
                     else:
@@ -241,3 +261,132 @@ with tab2:
     3. Watch the animation. If multiple words are selected, they will be concatenated
     4. Download the generated video if needed
     """)
+
+# ============================================
+# TAB 3: SENTENCE ANIMATIONS (How2Sign)
+# ============================================
+with tab3:
+    st.markdown("### Sentence-Level ASL Animations")
+    st.markdown("Browse and render full sentence signs from the How2Sign dataset.")
+    
+    if not sentence_to_pkl:
+        st.error("❌ How2Sign dataset not found. Please ensure `how2sign_mapping.json` and pickle files are available.")
+    else:
+        st.success(f"✅ Loaded {len(sentence_to_pkl):,} sentences from How2Sign dataset")
+        
+        # Search functionality
+        search_term = st.text_input("🔍 Search sentences:", placeholder="Type to search sentences...")
+        
+        if search_term:
+            filtered_sentences = [s for s in sentence_to_pkl.keys() if search_term.lower() in s.lower()]
+            st.write(f"Found {len(filtered_sentences)} matching sentences")
+        else:
+            filtered_sentences = list(sentence_to_pkl.keys())[:100]  # Show first 100 by default
+            st.info("💡 Showing first 100 sentences. Use search to find specific sentences.")
+        
+        # Sentence selection
+        selected_sentence = st.selectbox(
+            "Select a sentence to animate:",
+            [""] + filtered_sentences,
+            help="Choose a sentence to generate its ASL animation"
+        )
+        
+        if selected_sentence:
+            sentence_info = sentence_to_pkl[selected_sentence]
+            
+            # Display sentence details
+            st.markdown("---")
+            st.markdown("**Selected Sentence:**")
+            st.info(sentence_info['full_text'])
+            
+            with st.expander("📄 Details"):
+                st.markdown(f"**Pickle File:** `{sentence_info['pkl']}`")
+                pkl_path = os.path.join(sentence_dataset_dir, sentence_info['pkl'])
+                st.markdown(f"**File Path:** `{pkl_path}`")
+                st.markdown(f"**File Exists:** {'✅ Yes' if os.path.exists(pkl_path) else '❌ No'}")
+            
+            # Render options
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                render_full = st.checkbox("Render full animation (may be slow for long sentences)", value=False)
+            with col2:
+                max_frames = None if render_full else 150  # Limit to ~10 seconds at 15 fps
+            with col3:
+                # Check if GPU is available
+                import torch
+                gpu_available = torch.cuda.is_available()
+                if gpu_available:
+                    use_gpu = st.checkbox("🚀 Use GPU", value=True, help="Use GPU for faster rendering")
+                    device = 'cuda' if use_gpu else 'cpu'
+                else:
+                    st.info("💻 CPU only")
+                    device = 'cpu'
+            
+            if st.button("🎬 Generate Sentence Animation", type="primary", key="sentence_btn"):
+                pkl_path = os.path.join(sentence_dataset_dir, sentence_info['pkl'])
+                
+                if not os.path.exists(pkl_path):
+                    st.error("❌ Pickle file not found!")
+                else:
+                    device_label = "GPU (CUDA)" if device == 'cuda' else "CPU"
+                    with st.spinner(f"Generating animation on {device_label}... {'Full sequence' if render_full else 'Preview (first ~10 seconds)'}"):
+                        try:
+                            from sentence_to_smplx import SentenceToSMPLX
+                            
+                            # Initialize animator with device selection
+                            animator = SentenceToSMPLX(
+                                model_path=os.path.join(current_dir, "models"),
+                                viewport_width=640,
+                                viewport_height=480,
+                                device=device
+                            )
+                            
+                            # Load pose data
+                            pose_data = animator.load_pose_sequence(pkl_path)
+                            
+                            # Render to video
+                            output_filename = f"sentence_{sentence_info['pkl'].replace('.pkl', '.mp4')}"
+                            output_path = os.path.join(output_dir, output_filename)
+                            
+                            animator.render_animation(
+                                pose_data,
+                                save_path=output_path,
+                                fps=15,
+                                max_frames=max_frames
+                            )
+                            
+                            st.success("✅ Animation generated successfully!")
+                            
+                            # Display video
+                            st.markdown("### 🎥 Generated Animation")
+                            st.video(output_path)
+                            
+                            # Download button
+                            with open(output_path, "rb") as file:
+                                st.download_button(
+                                    label="⬇️ Download Video",
+                                    data=file,
+                                    file_name=output_filename,
+                                    mime="video/mp4"
+                                )
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error generating animation: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
+        
+        st.markdown("---")
+        st.markdown("""
+        **About Sentence-Level Animations:**
+        - Contains 30,997+ full sentence signs from How2Sign dataset
+        - Each animation shows continuous signing for a complete sentence
+        - Animations can be long (10-60+ seconds per sentence)
+        - Use preview mode to render only the first ~10 seconds
+        - Search to find specific sentences or topics
+        """)
+        
+        # Show some example sentences
+        with st.expander("📚 Example Sentences"):
+            sample_sentences = list(sentence_to_pkl.items())[:10]
+            for display, info in sample_sentences:
+                st.markdown(f"- {info['full_text'][:120]}{'...' if len(info['full_text']) > 120 else ''}")
