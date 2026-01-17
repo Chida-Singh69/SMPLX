@@ -5,4 +5,9 @@ smplx
 imageio
 trimesh
 pyrender
-scipy 
+scipy
+sentence-transformers
+faiss-cpu
+spacy
+flask
+youtube-transcript-api 
