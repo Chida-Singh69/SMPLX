@@ -317,6 +317,7 @@ def asl_from_youtube_sentences():
     data = request.get_json()
     url = data.get('url')
     max_sentences = data.get('max_sentences', 10)  # Limit to avoid long processing
+    include_subtitles = data.get('include_subtitles', True)
     
     if not url:
         return jsonify({'error': 'Missing YouTube URL'}), 400
@@ -482,6 +483,22 @@ def asl_from_youtube_sentences():
     print(f"\n[INFO] Concatenating {len(pose_sequences)} pose sequences...")
     all_params = np.vstack(pose_sequences)
     print(f"[INFO] Total frames: {all_params.shape[0]}")
+
+    # Build frame-aligned subtitle timeline from successful sentence matches.
+    subtitle_timeline = []
+    if include_subtitles:
+        current_frame = 0
+        for result in translation_results:
+            frame_count = int(result.get('frames', 0) or 0)
+            if result.get('strategy') == 'error' or frame_count <= 0:
+                continue
+
+            subtitle_timeline.append({
+                'start_frame': current_frame,
+                'end_frame': current_frame + frame_count - 1,
+                'text': result.get('original', '')
+            })
+            current_frame += frame_count
     
     # Create pose_data structure
     pose_data = {
@@ -496,7 +513,12 @@ def asl_from_youtube_sentences():
     
     # Render animation
     print(f"[INFO] Rendering animation to {video_filename}...")
-    sentence_animator.render_animation(pose_data, save_path=video_path, fps=15)
+    sentence_animator.render_animation(
+        pose_data,
+        save_path=video_path,
+        fps=15,
+        subtitle_timeline=subtitle_timeline
+    )
     
     # Calculate statistics
     successful = [r for r in translation_results if r['strategy'] != 'error']
@@ -535,6 +557,7 @@ def asl_from_youtube_sentences():
             'avg_confidence': float(np.mean([r.get('confidence', 0) for r in successful])) if successful else 0.0
         },
         'truncated': truncated,
+        'subtitles_enabled': bool(include_subtitles),
         'note': 'This translation uses semantic sentence matching from 30K+ How2Sign dataset'
     })
 

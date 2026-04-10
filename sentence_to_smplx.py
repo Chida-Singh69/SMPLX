@@ -7,7 +7,7 @@ import imageio
 import json
 from scipy.ndimage import gaussian_filter1d
 import trimesh
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import pickle
 import io
 
@@ -198,7 +198,80 @@ class SentenceToSMPLX:
             
         return to_cpu_recursive(data)
 
-    def render_animation(self, pose_data, save_path=None, fps=15, max_frames=None):
+    @staticmethod
+    def _wrap_text(text, max_chars=62):
+        """Wrap subtitle text into multiple lines for better readability."""
+        words = (text or "").split()
+        if not words:
+            return []
+
+        lines = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if len(candidate) <= max_chars:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines[:2]  # Keep at most two lines to avoid hiding the avatar
+
+    def _apply_subtitle(self, frame, subtitle_text):
+        """Overlay a subtitle at the bottom of the frame."""
+        if not subtitle_text:
+            return frame
+
+        pil_img = Image.fromarray(frame)
+        draw = ImageDraw.Draw(pil_img, "RGBA")
+        font = ImageFont.load_default()
+
+        lines = self._wrap_text(subtitle_text)
+        if not lines:
+            return frame
+
+        line_heights = []
+        line_widths = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_widths.append(bbox[2] - bbox[0])
+            line_heights.append(bbox[3] - bbox[1])
+
+        padding_x = 12
+        padding_y = 8
+        line_gap = 4
+        text_block_h = sum(line_heights) + (len(lines) - 1) * line_gap
+        box_w = max(line_widths) + (padding_x * 2)
+        box_h = text_block_h + (padding_y * 2)
+
+        img_w, img_h = pil_img.size
+        x0 = max((img_w - box_w) // 2, 0)
+        y0 = max(img_h - box_h - 14, 0)
+        x1 = min(x0 + box_w, img_w)
+        y1 = min(y0 + box_h, img_h)
+
+        # Semi-transparent background for contrast on bright and dark scenes.
+        draw.rectangle([x0, y0, x1, y1], fill=(0, 0, 0, 160))
+
+        y_cursor = y0 + padding_y
+        for idx, line in enumerate(lines):
+            line_w = line_widths[idx]
+            line_x = x0 + (box_w - line_w) // 2
+            draw.text((line_x, y_cursor), line, fill=(255, 255, 255, 255), font=font)
+            y_cursor += line_heights[idx] + line_gap
+
+        return np.array(pil_img)
+
+    def _subtitle_for_frame(self, frame_idx, subtitle_timeline):
+        """Return active subtitle text for a given frame index."""
+        if not subtitle_timeline:
+            return None
+        for item in subtitle_timeline:
+            if item['start_frame'] <= frame_idx <= item['end_frame']:
+                return item.get('text', '')
+        return None
+
+    def render_animation(self, pose_data, save_path=None, fps=15, max_frames=None, subtitle_timeline=None):
         """
         Render SMPL-X animation from pose data using pyrender.
         
@@ -207,6 +280,10 @@ class SentenceToSMPLX:
             save_path: Optional path to save the video
             fps: Frames per second for the output video
             max_frames: Optional maximum number of frames to render (for long sentences)
+            subtitle_timeline: Optional list of subtitle items with keys:
+                - start_frame (int)
+                - end_frame (int)
+                - text (str)
             
         Returns:
             List of rendered frames
@@ -293,6 +370,9 @@ class SentenceToSMPLX:
             # Render frame using pyrender (primary) or trimesh (fallback)
             frame = self._render_pyrender_frame(mesh)
             if frame is not None:
+                subtitle_text = self._subtitle_for_frame(i, subtitle_timeline)
+                if subtitle_text:
+                    frame = self._apply_subtitle(frame, subtitle_text)
                 frames.append(frame)
             
             # Progress updates more frequently for long sentences

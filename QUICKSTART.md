@@ -78,7 +78,7 @@ print(f"Confidence: {result['statistics']['avg_confidence']:.2f}")
   },
   "note": "This translation uses semantic sentence matching from 30K+ How2Sign dataset"
 }
-```
+```~
 
 ## API Endpoints
 
