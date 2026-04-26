@@ -1,10 +1,11 @@
-import streamlit as st
 import os
+os.environ.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
+
+import streamlit as st
 import json
 import requests
 import base64
 import streamlit.components.v1 as components
-import torch
 
 st.set_page_config(page_title="SMPL-X Animation Demo", layout="centered")
 st.title("🤟 ASL Overlay - Sign Language Animation")
@@ -74,22 +75,25 @@ def render_video_with_live_caption(video_path: str, caption_text: str, height: i
 # --- Configuration and Setup ---
 FLASK_API_URL = "http://localhost:5000"  # Flask backend URL
 
-st.sidebar.header("Rendering Settings")
+st.sidebar.markdown("---")
+global_gender = st.sidebar.selectbox("Avatar Gender", ["NEUTRAL", "MALE", "FEMALE"], index=0).lower()
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Settings")
+api_host = st.sidebar.text_input("Backend API Host", value="http://localhost:5000")
+
 device_mode = st.sidebar.selectbox(
     "Device for sentence rendering",
     ["Auto", "GPU", "CPU"],
     index=0,
-    help="Applies to the Sentence Animations tab."
+    help="Applies to the Sentence Animations tab. CPU is recommended for stability."
 )
 
+preferred_device = "cpu"
 if device_mode == "GPU":
-    preferred_device = "cuda" if torch.cuda.is_available() else "cpu"
-    if preferred_device == "cpu":
-        st.sidebar.warning("GPU requested, but CUDA is not available. Falling back to CPU.")
-elif device_mode == "CPU":
-    preferred_device = "cpu"
-else:
-    preferred_device = "cuda" if torch.cuda.is_available() else "cpu"
+    st.sidebar.warning("GPU mode is currently disabled for this app to avoid runtime instability. Using CPU.")
+elif device_mode == "Auto":
+    st.sidebar.caption("Auto mode currently resolves to CPU for stable rendering.")
 
 st.sidebar.write(f"Active device: {preferred_device.upper()}")
 
@@ -157,7 +161,7 @@ with tab1:
             with st.spinner("Extracting transcript from YouTube..."):
                 try:
                     response = requests.post(
-                        f"{FLASK_API_URL}/extract_transcript",
+                        f"{api_host}/extract_transcript",
                         json={"url": youtube_url},
                         timeout=30
                     )
@@ -232,10 +236,13 @@ with tab1:
         if st.button("Generate ASL Animation", key="youtube_btn", type="primary"):
             with st.spinner("Generating ASL animation. This may take 30-60 seconds."):
                 try:
-                    # Call Flask API endpoint
+                    payload = {
+                        "url": st.session_state['youtube_url'],
+                        "gender": global_gender
+                    }
                     response = requests.post(
-                        f"{FLASK_API_URL}/asl_from_youtube",
-                        json={"url": st.session_state['youtube_url']},
+                        f"{api_host}/asl_from_youtube",
+                        json=payload,
                         timeout=120
                     )
                     
@@ -305,10 +312,13 @@ with tab2:
         else:
             with st.spinner(f"Generating animation for {', '.join(selected_words)}... This might take a moment."):
                 try:
-                    # Call Flask API to generate video
+                    payload = {
+                        "words": selected_words,
+                        "gender": global_gender
+                    }
                     response = requests.post(
-                        f"{FLASK_API_URL}/asl_stream",
-                        json={"words": selected_words},
+                        f"{api_host}/asl_stream",
+                        json=payload,
                         timeout=60
                     )
                     
@@ -407,15 +417,17 @@ with tab3:
                     device_label = "GPU (CUDA)" if device == 'cuda' else "CPU"
                     with st.spinner(f"Generating animation on {device_label}... {'Full sequence' if render_full else 'Preview (first ~10 seconds)'}"):
                         try:
-                            from sentence_to_smplx import SentenceToSMPLX
+                            if 'animator' not in st.session_state or st.session_state.get('animator_gender') != global_gender:
+                                with st.spinner(f"Loading '{global_gender}' SMPL-X model for animation engine..."):
+                                    from sentence_to_smplx import SentenceToSMPLX
+                                    st.session_state.animator = SentenceToSMPLX(
+                                        model_path="models", 
+                                        device='cpu', # CPU avoids WebGL context conflict
+                                        gender=global_gender
+                                    )
+                                    st.session_state.animator_gender = global_gender
                             
-                            # Initialize animator with device selection
-                            animator = SentenceToSMPLX(
-                                model_path=os.path.join(current_dir, "models"),
-                                viewport_width=640,
-                                viewport_height=480,
-                                device=device
-                            )
+                            animator = st.session_state.animator
                             
                             # Load pose data
                             pose_data = animator.load_pose_sequence(pkl_path)

@@ -36,9 +36,18 @@ for pkl_file, word in gloss_map.items():
 dataset_words = set(word_to_pkl.keys())
 print(f"Loaded {len(dataset_words)} words with available pose data (out of {len(gloss_map)} total)")
 
-# Initialize animators
-animator = WordToSMPLX(model_path=os.path.join(current_dir, "models"))
-sentence_animator = SentenceToSMPLX(model_path=os.path.join(current_dir, "models"))
+# Initialize animators lazily by gender cache to save memory
+animators_cache = {}
+
+def get_animators(gender='neutral'):
+    gender = gender.lower()
+    if gender not in animators_cache:
+        print(f"[INFO] Lazily initializing SMPLX models for gender: {gender.upper()}")
+        animators_cache[gender] = {
+            'word': WordToSMPLX(model_path=os.path.join(current_dir, "models"), gender=gender),
+            'sentence': SentenceToSMPLX(model_path=os.path.join(current_dir, "models"), gender=gender)
+        }
+    return animators_cache[gender]['word'], animators_cache[gender]['sentence']
 
 # Initialize sentence matcher (lazy-loaded on first use)
 sentence_matcher = None
@@ -163,6 +172,10 @@ def asl_from_youtube():
     if os.path.exists(video_path):
         return jsonify({'url': f"/output/{video_filename}", 'words': words})
 
+    # Retrieve requested gender and initialize model lazily
+    gender = data.get('gender', 'neutral').lower()
+    animator, _ = get_animators(gender)
+
     # Load and concatenate pose data with comprehensive error handling
     pose_data_sequences = []
     successful_words = []
@@ -215,7 +228,7 @@ def asl_from_youtube():
     # Create proper pose_data structure
     pose_data = {
         'smplx': all_params,
-        'gender': 'neutral',
+        'gender': gender,
         'fps': 15
     }
     
@@ -254,6 +267,10 @@ def asl_stream():
         if invalid_words:
             return jsonify({'error': f'Invalid words: {", ".join(invalid_words)}'}), 400
         
+        # Retrieve requested gender and initialize model lazily
+        gender = data.get('gender', 'neutral').lower()
+        animator, _ = get_animators(gender)
+        
         # Load and concatenate pose data
         pose_data_sequences = []
         successful_words = []
@@ -288,7 +305,7 @@ def asl_stream():
         # Create pose_data structure
         pose_data = {
             'smplx': all_params,
-            'gender': 'neutral',
+            'gender': gender,
             'fps': 15
         }
         
@@ -353,6 +370,10 @@ def asl_from_youtube_sentences():
     
     # Initialize sentence matcher
     matcher = get_sentence_matcher()
+    
+    # Retrieve requested gender and initialized model
+    gender = data.get('gender', 'neutral').lower()
+    _, sentence_animator = get_animators(gender)
     
     # Match each sentence
     translation_results = []
@@ -503,7 +524,7 @@ def asl_from_youtube_sentences():
     # Create pose_data structure
     pose_data = {
         'smplx': all_params,
-        'gender': 'neutral',
+        'gender': gender,
         'fps': 15
     }
     

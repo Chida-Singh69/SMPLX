@@ -79,6 +79,44 @@ class SentenceToSMPLX:
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         
+        try:
+            with torch.no_grad():
+                # neutral pose to find torso bounding box
+                neutral_output = self.smplx_model(
+                    body_pose=torch.zeros((1, 63)).to(self.device),
+                    global_orient=torch.zeros((1, 3)).to(self.device),
+                    return_verts=True
+                )
+                v = neutral_output.vertices[0].cpu().numpy()
+                x, y, z = v[:, 0], v[:, 1], v[:, 2]
+                
+                # Smooth/Round boundary logic
+                valid_y = (y > -0.42) & (y < 0.18)
+                
+                # Round neck cut (carve sphere at throat)
+                neck_dist = np.sqrt(x**2 + (y - 0.17)**2 + z**2)
+                round_neck = neck_dist > 0.08
+                
+                # Round sleeves (keep vertices near the torso core or within a radius from shoulders)
+                d_left = np.sqrt((x + 0.18)**2 + (y - 0.12)**2 + z**2)
+                d_right = np.sqrt((x - 0.18)**2 + (y - 0.12)**2 + z**2)
+                in_sleeves = (d_left < 0.22) | (d_right < 0.22) | (np.abs(x) < 0.2)
+                
+                self.tshirt_indices = np.where(valid_y & round_neck & in_sleeves)[0]
+                self.tshirt_mask_set = set(self.tshirt_indices)
+                
+                self.hair_indices = None
+                self.eyes_indices = None
+                self.glasses_indices = None
+                self.beard_indices = None
+
+                self.glasses_indices = None
+                self.beard_indices = None
+        except Exception as e:
+            print(f"Warning: Failed to create garment mask: {e}")
+            self.tshirt_indices = None
+            self.tshirt_mask_set = set()
+        
         # Lazy initialization - only create renderer when actually rendering
         self.camera = None
         self.light = None
@@ -118,8 +156,12 @@ class SentenceToSMPLX:
         
         self._renderer_init_attempted = True
         
-        # Try multiple OpenGL platforms
-        platforms_to_try = ['osmesa', 'egl', None]  # None = default platform
+        # Try OpenGL backends in OS-appropriate order.
+        # On Windows, default backend is the most reliable for pyrender.
+        if os.name == 'nt':
+            platforms_to_try = [None]
+        else:
+            platforms_to_try = ['egl', None, 'osmesa']  # None = default platform
         errors = []
         
         for platform in platforms_to_try:
@@ -139,9 +181,9 @@ class SentenceToSMPLX:
                 # Camera pose: 4x4 transformation matrix
                 # Position for frontal standing view with full body and hands visible
                 self.cam_pose = np.eye(4)
-                self.cam_pose[0, 3] = 0.0      # x: center (no horizontal offset)
-                self.cam_pose[1, 3] = 0.2      # y: slightly above center for better hand view
-                self.cam_pose[2, 3] = 2.5      # z: further away to avoid hand clipping
+                self.cam_pose[0, 3] = 0.0      # x: center
+                self.cam_pose[1, 3] = 0.15    # y: focus on upper body
+                self.cam_pose[2, 3] = 1.5    # z: closer zoom
                 
                 # Offscreen renderer: renders to images (not screen display)
                 self.renderer = pyrender.OffscreenRenderer(
@@ -389,6 +431,28 @@ class SentenceToSMPLX:
             
         return frames
     
+    def _create_proxy_mesh(self, mesh, indices, mask_set, offset=0.005, laplacian=0):
+        if indices is None or len(indices) == 0:
+            return None
+        proxy_verts = np.copy(mesh.vertices)
+        normals = mesh.vertex_normals
+        proxy_verts[indices] += normals[indices] * offset
+        proxy_faces = []
+        for face in mesh.faces:
+            if face[0] in mask_set and face[1] in mask_set and face[2] in mask_set:
+                proxy_faces.append(face)
+        if not proxy_faces:
+            return None
+        p_mesh = trimesh.Trimesh(vertices=proxy_verts, faces=proxy_faces)
+        
+        if laplacian > 0:
+            try:
+                trimesh.smoothing.filter_laplacian(p_mesh, iterations=laplacian)
+            except Exception:
+                pass
+                
+        return p_mesh
+
     def _render_pyrender_frame(self, mesh):
         """
         Render a single frame using pyrender.
@@ -407,12 +471,26 @@ class SentenceToSMPLX:
             return self._render_trimesh_frame_fallback(mesh)
         
         try:
+            skin_material = pyrender.MetallicRoughnessMaterial(
+                metallicFactor=0.0,
+                roughnessFactor=0.7,
+                baseColorFactor=[0.8, 0.6, 0.5, 1.0] # Default skin
+            )
+            
             # Create pyrender Mesh from trimesh
-            pyrender_mesh = pyrender.Mesh.from_trimesh(mesh)
+            pyrender_mesh = pyrender.Mesh.from_trimesh(mesh, material=skin_material)
             
             # Create scene and add components
-            scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0, 1.0])  # White background
+            scene = pyrender.Scene(bg_color=[0.0, 0.0, 0.0, 1.0])  # Black background
             scene.add(pyrender_mesh)
+            
+            # --- T-SHIRT LAYER ---
+            tshirt_mesh = self._create_proxy_mesh(mesh, self.tshirt_indices, self.tshirt_mask_set, offset=0.008, laplacian=2)
+            if tshirt_mesh is not None:
+                mat = pyrender.MetallicRoughnessMaterial(
+                    baseColorFactor=[0.247, 0.784, 1.0, 1.0], doubleSided=True)
+                scene.add(pyrender.Mesh.from_trimesh(tshirt_mesh, material=mat))
+
             scene.add(self.camera, pose=self.cam_pose)
             scene.add(self.light, pose=self.cam_pose)
             
@@ -501,12 +579,12 @@ class SentenceToSMPLX:
             ax.set_yticks([])
             ax.set_zticks([])
             ax.grid(False)
-            ax.set_facecolor('white')
-            fig.patch.set_facecolor('white')
+            ax.set_facecolor('black')
+            fig.patch.set_facecolor('black')
             
             # Render to buffer
             buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, facecolor='white')
+            plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, facecolor='black')
             buf.seek(0)
             
             # Load as array
