@@ -12,14 +12,14 @@ from word_to_smplx import WordToSMPLX
 from sentence_to_smplx import SentenceToSMPLX
 from sentence_matcher import SentenceMatcher
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # --- Setup paths and load resources once ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
 dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 how2sign_mapping_path = os.path.join(current_dir, "how2sign_mapping.json")
-how2sign_dataset_dir = os.path.join(current_dir, "how2sign_pkls_cropTrue_shapeFalse")
+how2sign_dataset_dir = os.path.join(current_dir, "how2sign-trial")
 output_dir = os.path.join(current_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
 
@@ -101,6 +101,111 @@ def create_word_mapping(transcript_list, dataset_words):
                     'status': status
                 })
     return word_map
+
+# --- API Endpoints (Core) ---
+
+@app.route('/')
+def home():
+    if os.path.exists(os.path.join(app.template_folder, 'index.html')):
+        return send_from_directory(app.template_folder, 'index.html')
+    return "<h1>SMPL-X Animation API</h1><p>Frontend templates not found yet. Streamlit is at :8503</p>"
+
+@app.route('/api/available_words')
+def available_words():
+    return jsonify(sorted(list(dataset_words)))
+
+@app.route('/api/list_poses')
+def list_poses():
+    try:
+        from poses_to_animation import PoseAssembler
+        poses_dir = os.path.join(current_dir, "poses")
+        assembler = PoseAssembler(poses_dir)
+        return jsonify(assembler.list_folders())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/render_poses', methods=['POST'])
+def render_pose_api():
+    try:
+        from poses_to_animation import render_pose_folder
+        data = request.get_json()
+        folder_name = data.get('folder')
+        gender = data.get('gender', 'neutral')
+        
+        if not folder_name:
+            return jsonify({"error": "No folder specified"}), 400
+            
+        poses_dir = os.path.join(current_dir, "poses")
+        output_filename = f"pose_{folder_name}_{gender}.mp4"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        # Assemble and render
+        render_pose_folder(
+            folder_name, 
+            poses_root=poses_dir,
+            output_path=output_path,
+            gender=gender
+        )
+        
+        return jsonify({
+            "status": "success",
+            "url": f"/output/{output_filename}",
+            "filename": output_filename
+        })
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/list_sentences')
+def list_sentences():
+    try:
+        if not os.path.exists(how2sign_mapping_path):
+            return jsonify([])
+        with open(how2sign_mapping_path, "r", encoding='utf-8') as f:
+            mapping = json.load(f)
+        
+        # Prepare list for frontend
+        sentences = []
+        for pkl, text in mapping.items():
+            if os.path.exists(os.path.join(how2sign_dataset_dir, pkl)):
+                sentences.append({"pkl": pkl, "text": text})
+        
+        return jsonify(sentences)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/render_sentence', methods=['POST'])
+def render_sentence_api():
+    try:
+        data = request.get_json()
+        pkl_file = data.get('pkl')
+        gender = data.get('gender', 'neutral')
+        
+        if not pkl_file:
+            return jsonify({"error": "No pickle file specified"}), 400
+            
+        pkl_path = os.path.join(how2sign_dataset_dir, pkl_file)
+        if not os.path.exists(pkl_path):
+            return jsonify({"error": "Pickle file not found"}), 404
+            
+        _, sentence_animator = get_animators(gender)
+        
+        output_filename = f"h2s_{pkl_file.replace('.pkl', '')}_{gender}.mp4"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        pose_data = sentence_animator.load_pose_sequence(pkl_path)
+        sentence_animator.render_animation(pose_data, save_path=output_path)
+        
+        return jsonify({
+            "status": "success",
+            "url": f"/output/{output_filename}",
+            "filename": output_filename
+        })
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 # --- Endpoint: Extract transcript only (preview) ---
 @app.route('/extract_transcript', methods=['POST'])

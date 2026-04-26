@@ -7,8 +7,115 @@ import requests
 import base64
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="SMPL-X Animation Demo", layout="centered")
-st.title("🤟 ASL Overlay - Sign Language Animation")
+st.set_page_config(page_title="SMPL-X | ASL Animation Suite", layout="wide")
+
+# Custom CSS for Premium Design
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+    
+    * { font-family: 'Outfit', sans-serif; }
+
+    /* Main Background */
+    .stApp {
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+        background-attachment: fixed;
+        color: #f8fafc;
+    }
+    
+    /* Header Styling */
+    h1 {
+        font-weight: 800 !important;
+        background: linear-gradient(to right, #ffffff, #6366f1, #a855f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 3.5rem !important;
+        margin-bottom: 0.5rem !important;
+        letter-spacing: -0.02em;
+    }
+    
+    .subheader {
+        color: #94a3b8;
+        font-size: 1.2rem;
+        margin-bottom: 3rem;
+        font-weight: 300;
+    }
+    
+    /* Glassmorphism Cards */
+    [data-testid="stVerticalBlock"] > div > div > div > [data-testid="stVerticalBlock"] {
+        background: rgba(255, 255, 255, 0.03);
+        padding: 2rem;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(16px);
+        margin-bottom: 2rem;
+    }
+    
+    /* Buttons */
+    div.stButton > button {
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+        color: white !important;
+        border: none !important;
+        padding: 0.8rem 2.5rem !important;
+        border-radius: 14px !important;
+        font-weight: 700 !important;
+        font-size: 1rem !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
+        width: 100%;
+    }
+    
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 25px rgba(99, 102, 241, 0.5) !important;
+        filter: brightness(1.1);
+    }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.6) !important;
+        backdrop-filter: blur(12px) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+        width: 320px !important;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 12px;
+        background-color: rgba(0, 0, 0, 0.2);
+        padding: 8px;
+        border-radius: 16px;
+        margin-bottom: 2rem;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        padding: 10px 24px !important;
+        background-color: transparent !important;
+        border-radius: 12px !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+        border: none !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: rgba(99, 102, 241, 0.2) !important;
+        color: #fff !important;
+    }
+    
+    /* Metric styling */
+    [data-testid="stMetricValue"] {
+        font-weight: 800;
+        color: #6366f1;
+    }
+    
+    /* Hide Streamlit Footer */
+    footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("SMPL-X Animator")
+st.markdown('<p class="subheader">Advanced ASL Animation & 3D Pose Orchestration</p>', unsafe_allow_html=True)
 
 
 def render_video_with_live_caption(video_path: str, caption_text: str, height: int = 620):
@@ -27,7 +134,7 @@ def render_video_with_live_caption(video_path: str, caption_text: str, height: i
             </video>
 
             <div id=\"{element_id}_caption\"
-                     style=\"font-size:18px; line-height:1.8; padding:10px 12px; border-radius:8px; background:#f5f7fb; border:1px solid #e3e8f2; min-height:64px;\">
+                     style=\"font-size:22px; line-height:1.6; padding:20px; border-radius:16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); min-height:80px; text-align:center; backdrop-filter:blur(10px);\">
             </div>
         </div>
 
@@ -117,7 +224,7 @@ all_words = sorted(word_to_pkl.keys())
 
 # Load sentence-level dataset (How2Sign)
 sentence_mapping_path = os.path.join(current_dir, "how2sign_mapping.json")
-sentence_dataset_dir = os.path.join(current_dir, "how2sign_pkls_cropTrue_shapeFalse")
+sentence_dataset_dir = os.path.join(current_dir, "how2sign-trial")
 
 sentence_to_pkl = {}
 if os.path.exists(sentence_mapping_path):
@@ -136,7 +243,7 @@ if os.path.exists(sentence_mapping_path):
             }
 
 # --- Tabs for Different Modes ---
-tab1, tab2, tab3 = st.tabs(["YouTube Video", "Word Selection", "Sentence Animations"])
+tab1, tab2, tab3, tab4 = st.tabs(["YouTube Video", "Word Selection", "Sentence Animations", "Poses Explorer"])
 
 # ============================================
 # TAB 1: YOUTUBE VIDEO TRANSLATION
@@ -479,3 +586,75 @@ with tab3:
             sample_sentences = list(sentence_to_pkl.items())[:10]
             for display, info in sample_sentences:
                 st.markdown(f"- {info['full_text'][:120]}{'...' if len(info['full_text']) > 120 else ''}")
+
+# ============================================
+# TAB 4: POSES EXPLORER
+# ============================================
+with tab4:
+    st.markdown("### 📂 Poses Explorer (Frame-by-Frame)")
+    st.markdown("Explore raw per-frame pose directories and assemble them into full animations.")
+    
+    poses_dir = os.path.join(current_dir, "poses")
+    if not os.path.exists(poses_dir):
+        st.error(f"Poses directory not found at {poses_dir}")
+    else:
+        from poses_to_animation import PoseAssembler, render_pose_folder
+        assembler = PoseAssembler(poses_dir)
+        pose_folders = assembler.list_folders()
+        
+        if not pose_folders:
+            st.warning("No pose folders found in the 'poses' directory.")
+        else:
+            st.success(f"Found {len(pose_folders):,} pose directories")
+            
+            # Search functionality for folders
+            pose_search = st.text_input("Search pose folders:", placeholder="Type to search folders...", key="pose_search")
+            if pose_search:
+                filtered_folders = [f for f in pose_folders if pose_search.lower() in f.lower()]
+            else:
+                filtered_folders = pose_folders[:100]
+                st.info("Showing first 100 folders. Use search to find specific sequences.")
+            
+            selected_pose_folder = st.selectbox(
+                "Select a pose sequence:",
+                [""] + filtered_folders,
+                key="pose_select"
+            )
+            
+            if selected_pose_folder:
+                st.markdown("---")
+                st.markdown(f"**Selected Folder:** `{selected_pose_folder}`")
+                
+                # Check frames count
+                folder_path = os.path.join(poses_dir, selected_pose_folder)
+                frames = [f for f in os.listdir(folder_path) if f.endswith('_3D.pkl')]
+                st.markdown(f"- **Frames found:** {len(frames)}")
+                
+                if st.button("Assemble and Render Poses", type="primary", key="render_pose_btn"):
+                    with st.spinner(f"Assembling {len(frames)} frames and rendering..."):
+                        try:
+                            output_filename = f"pose_{selected_pose_folder}.mp4"
+                            output_path = os.path.join(output_dir, output_filename)
+                            
+                            # Use our helper
+                            final_path = render_pose_folder(
+                                selected_pose_folder, 
+                                poses_root=poses_dir,
+                                output_path=output_path,
+                                gender=global_gender
+                            )
+                            
+                            st.success("Animation assembled and rendered!")
+                            st.video(final_path)
+                            
+                            with open(final_path, "rb") as f:
+                                st.download_button(
+                                    label="Download Video",
+                                    data=f,
+                                    file_name=output_filename,
+                                    mime="video/mp4"
+                                )
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())

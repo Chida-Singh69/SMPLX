@@ -421,7 +421,7 @@ class SentenceToSMPLX:
             if (i + 1) % 20 == 0 or i == N - 1:
                 print(f"  Rendered {i + 1}/{N} frames ({(i+1)/N*100:.1f}%)")
         
-        print(f"✓ Rendering complete!")
+        print(f"[INFO] Rendering complete!")
         
         # Video Encoding - save to MP4 using imageio
         if save_path and frames:
