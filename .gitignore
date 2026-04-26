@@ -12,6 +12,7 @@ env/
 # Project specific - large files
 #word-level-dataset-cpu/
 output/
+/poses/
 models/
 datasett/
 how2sign_pkls_cropTrue_shapeFalse
