@@ -1,0 +1,19 @@
+{
+  "pkl_dir": "datasett",
+  "out_dir": "checkpoints/vae_smoke",
+  "seq_len": 64,
+  "pose_mode": "full182",
+  "root_relative": true,
+  "latent_dim": 64,
+  "hidden_dim": 256,
+  "epochs": 1,
+  "batch_size": 2,
+  "lr": 0.001,
+  "weight_decay": 1e-06,
+  "train_ratio": 0.95,
+  "seed": 42,
+  "num_workers": 0,
+  "grad_clip": 1.0,
+  "kl_max": 0.001,
+  "kl_warmup_epochs": 20
+}

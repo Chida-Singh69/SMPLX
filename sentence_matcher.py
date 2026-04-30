@@ -42,12 +42,34 @@ class SentenceMatcher:
         self.embeddings = None      # sentence embeddings
         self.index = None           # FAISS index
         self.model = None           # SentenceTransformer model
+        self.reranker = None        # Optional CrossEncoder reranker
         self.nlp = None             # spaCy model for chunking
         
         self._initialized = False
         self._dependencies_loaded = False
         
         print(f"[SentenceMatcher] Initialized (lazy-loading enabled)")
+
+    def _get_reranker(self, model_name: str):
+        """Lazy-load a CrossEncoder reranker (downloads model if needed)."""
+        if self.reranker is not None and getattr(self.reranker, "model_name", None) == model_name:
+            return self.reranker
+
+        self._load_dependencies()
+
+        try:
+            CrossEncoder = sentence_transformers.CrossEncoder
+        except Exception as e:
+            raise ImportError(
+                "CrossEncoder is unavailable from sentence-transformers. "
+                "Ensure sentence-transformers is installed and up to date."
+            ) from e
+
+        print(f"[SentenceMatcher] Loading reranker model: {model_name}")
+        self.reranker = CrossEncoder(model_name)
+        # For quick check/debugging
+        setattr(self.reranker, "model_name", model_name)
+        return self.reranker
     
     def _load_dependencies(self):
         """Lazy-load heavy dependencies only when needed."""
@@ -61,7 +83,7 @@ class SentenceMatcher:
         try:
             import sentence_transformers as st
             sentence_transformers = st
-            print("  ✓ sentence-transformers loaded")
+            print("  [OK] sentence-transformers loaded")
         except ImportError:
             raise ImportError(
                 "sentence-transformers not installed. "
@@ -71,7 +93,7 @@ class SentenceMatcher:
         try:
             import faiss as f
             faiss = f
-            print("  ✓ faiss loaded")
+            print("  [OK] faiss loaded")
         except ImportError:
             raise ImportError(
                 "faiss not installed. "
@@ -82,9 +104,9 @@ class SentenceMatcher:
         try:
             import spacy as sp
             spacy = sp
-            print("  ✓ spacy loaded")
+            print("  [OK] spacy loaded")
         except Exception as e:
-            print(f"  ⚠ spacy unavailable (using simple chunking fallback): {e}")
+            print(f"  [WARN] spacy unavailable (using simple chunking fallback): {e}")
             spacy = None
         
         self._dependencies_loaded = True
@@ -106,7 +128,7 @@ class SentenceMatcher:
                 self.sentence_to_file[normalized] = pkl_file
         
         self.sentence_list = list(self.sentence_to_file.keys())
-        print(f"  ✓ Loaded {len(self.sentence_list)} sentences with available .pkl files")
+        print(f"  [OK] Loaded {len(self.sentence_list)} sentences with available .pkl files")
     
     def _build_index(self):
         """Build FAISS index for semantic search."""
@@ -142,10 +164,17 @@ class SentenceMatcher:
         faiss.normalize_L2(self.embeddings)
         self.index.add(self.embeddings)
         
-        print(f"  ✓ Index built with {self.index.ntotal} sentences")
+        print(f"  [OK] Index built with {self.index.ntotal} sentences")
         self._initialized = True
     
-    def search(self, query: str, top_k: int = 5) -> List[Dict]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        rerank: bool = False,
+        rerank_model: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        rerank_k: int = 25,
+    ) -> List[Dict]:
         """
         Find top-k most similar sentences using semantic search.
         
@@ -164,8 +193,9 @@ class SentenceMatcher:
         query_embedding = self.model.encode([query.lower().strip()])
         faiss.normalize_L2(query_embedding)
         
-        # Search
-        distances, indices = self.index.search(query_embedding, top_k)
+        # Search (bi-encoder)
+        initial_k = int(max(top_k, rerank_k if rerank else top_k))
+        distances, indices = self.index.search(query_embedding, initial_k)
         
         # Format results
         results = []
@@ -177,11 +207,25 @@ class SentenceMatcher:
             results.append({
                 'sentence': sentence,
                 'similarity': float(dist),
+                'bi_similarity': float(dist),
                 'pkl_path': pkl_path,
                 'pkl_file': self.sentence_to_file[sentence]
             })
-        
-        return results
+
+        # Optional cross-encoder reranking for higher precision.
+        if rerank and results:
+            rerank_k = int(min(max(1, rerank_k), len(results)))
+            candidates = results[:rerank_k]
+            reranker = self._get_reranker(rerank_model)
+            pairs = [(query.strip(), c['sentence']) for c in candidates]
+            scores = reranker.predict(pairs)
+            for c, s in zip(candidates, scores):
+                c['rerank_score'] = float(s)
+
+            candidates.sort(key=lambda d: d.get('rerank_score', float('-inf')), reverse=True)
+            results = candidates + results[rerank_k:]
+
+        return results[:top_k]
     
     def _load_spacy_model(self):
         """Lazy-load spaCy model for chunking."""
@@ -225,7 +269,7 @@ class SentenceMatcher:
                 if chunks:
                     return [c for c in chunks if c]
             except Exception as e:
-                print(f"  ⚠ spaCy chunking failed: {e}, using simple fallback")
+                print(f"  [WARN] spaCy chunking failed: {e}, using simple fallback")
         
         # Simple fallback: split by common punctuation and conjunctions
         import re
@@ -240,7 +284,7 @@ class SentenceMatcher:
             chunks = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
         return [c for c in chunks if c]  # Remove empty strings
     
-    def translate_sentence(self, input_sentence: str, verbose: bool = True) -> Dict:
+    def translate_sentence(self, input_sentence: str, verbose: bool = True, rerank: bool = False) -> Dict:
         """
         Translate a sentence to ASL animation using semantic matching.
         
@@ -267,7 +311,7 @@ class SentenceMatcher:
         input_normalized = input_sentence.strip().lower()
         
         # Try full sentence match
-        matches = self.search(input_normalized, top_k=3)
+        matches = self.search(input_normalized, top_k=3, rerank=rerank)
         best_match = matches[0] if matches else None
         
         if not best_match:
@@ -283,7 +327,7 @@ class SentenceMatcher:
         # High confidence - use directly
         if best_similarity >= self.HIGH_CONFIDENCE:
             if verbose:
-                print(f"✓ High confidence match: '{best_match['sentence']}' (sim: {best_similarity:.3f})")
+                print(f"[OK] High confidence match: '{best_match['sentence']}' (sim: {best_similarity:.3f})")
             return {
                 'strategy': 'full',
                 'matches': [best_match],
@@ -295,7 +339,7 @@ class SentenceMatcher:
         # Medium confidence - use with warning
         elif best_similarity >= self.MEDIUM_CONFIDENCE:
             if verbose:
-                print(f"⚠ Medium confidence match: '{best_match['sentence']}' (sim: {best_similarity:.3f})")
+                print(f"[WARN] Medium confidence match: '{best_match['sentence']}' (sim: {best_similarity:.3f})")
             return {
                 'strategy': 'full',
                 'matches': [best_match],
@@ -307,7 +351,7 @@ class SentenceMatcher:
         # Low confidence - try chunking
         else:
             if verbose:
-                print(f"✗ Low confidence ({best_similarity:.3f}) - trying phrase chunking...")
+                print(f"[LOW] Low confidence ({best_similarity:.3f}) - trying phrase chunking...")
             
             chunks = self._chunk_sentence(input_sentence)
             if verbose:
@@ -315,17 +359,17 @@ class SentenceMatcher:
             
             chunk_matches = []
             for chunk in chunks:
-                chunk_results = self.search(chunk, top_k=1)
+                chunk_results = self.search(chunk, top_k=1, rerank=rerank)
                 if chunk_results and chunk_results[0]['similarity'] >= self.LOW_CONFIDENCE:
                     if verbose:
-                        print(f"    ✓ '{chunk}' -> '{chunk_results[0]['sentence']}' (sim: {chunk_results[0]['similarity']:.3f})")
+                        print(f"    [OK] '{chunk}' -> '{chunk_results[0]['sentence']}' (sim: {chunk_results[0]['similarity']:.3f})")
                     chunk_matches.append({
                         'input_chunk': chunk,
                         'match': chunk_results[0]
                     })
                 else:
                     if verbose:
-                        print(f"    ✗ '{chunk}' - no good match")
+                        print(f"    [MISS] '{chunk}' - no good match")
             
             if chunk_matches:
                 avg_confidence = np.mean([cm['match']['similarity'] for cm in chunk_matches])
@@ -339,7 +383,7 @@ class SentenceMatcher:
             else:
                 # No chunks matched - return best overall match with strong warning
                 if verbose:
-                    print(f"  ⚠ No chunks matched well - using best overall match (low quality)")
+                    print(f"  [WARN] No chunks matched well - using best overall match (low quality)")
                 return {
                     'strategy': 'fallback',
                     'matches': [best_match],

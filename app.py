@@ -2,15 +2,20 @@ import os
 import json
 import re
 import string
+import hashlib
+import pickle
+import io
 import numpy as np
 import torch
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 from word_to_smplx import WordToSMPLX
 from sentence_to_smplx import SentenceToSMPLX
 from sentence_matcher import SentenceMatcher
+from vae_model import SignLanguageVAE
+from pose_dataset import load_stats
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -19,9 +24,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 mapping_path = os.path.join(current_dir, "filtered_video_to_gloss.json")
 dataset_dir = os.path.join(current_dir, "word-level-dataset-cpu-fixed")
 how2sign_mapping_path = os.path.join(current_dir, "how2sign_mapping.json")
-how2sign_dataset_dir = os.path.join(current_dir, "how2sign-trial")
+how2sign_dataset_dir = os.path.join(current_dir, "how2sign_pkls_cropTrue_shapeFalse")
+if not os.path.exists(how2sign_dataset_dir):
+    how2sign_dataset_dir = os.path.join(current_dir, "how2sign-trial")
 output_dir = os.path.join(current_dir, "output")
 os.makedirs(output_dir, exist_ok=True)
+
+text_cache_dir = os.path.join(output_dir, "text_cache")
+os.makedirs(text_cache_dir, exist_ok=True)
 
 with open(mapping_path, "r") as f:
     gloss_map = json.load(f)
@@ -59,6 +69,176 @@ def get_sentence_matcher():
         print("[INFO] Initializing sentence matcher...")
         sentence_matcher = SentenceMatcher(how2sign_mapping_path, how2sign_dataset_dir)
     return sentence_matcher
+
+
+# --- VAE Resources (Lazy Loaded) ---
+vae_resources = {
+    'model': None,
+    'stats': None,
+    'cache': None,
+    'config': None,
+    'initialized': False,
+    'available': False
+}
+
+def get_vae_resources():
+    """Lazy-load VAE model, stats, and latent cache."""
+    if vae_resources['initialized']:
+        return vae_resources
+
+    vae_dir = os.path.join(current_dir, "checkpoints", "vae_h2s")
+    ckpt_path = os.path.join(vae_dir, "vae_best.pt")
+    stats_path = os.path.join(vae_dir, "norm_stats.npz")
+    cache_path = os.path.join(vae_dir, "latent_cache.npz")
+
+    if not all(os.path.exists(p) for p in [ckpt_path, stats_path, cache_path]):
+        print("[INFO] VAE model files not found. VAE blending disabled.")
+        vae_resources['initialized'] = True
+        vae_resources['available'] = False
+        return vae_resources
+
+    try:
+        print("[INFO] Loading VAE model components...")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # Load checkpoint
+        ckpt = torch.load(ckpt_path, map_location=device)
+        cfg = ckpt["config"]
+        
+        model = SignLanguageVAE(
+            seq_len=cfg["seq_len"],
+            pose_dim=ckpt["pose_dim"],
+            latent_dim=cfg["latent_dim"],
+            hidden_dim=cfg["hidden_dim"],
+        ).to(device)
+        model.load_state_dict(ckpt["model_state"])
+        model.eval()
+        
+        # Load stats and cache
+        stats = load_stats(stats_path)
+        cache = np.load(cache_path)
+        
+        vae_resources.update({
+            'model': model,
+            'stats': stats,
+            'cache': cache,
+            'config': cfg,
+            'initialized': True,
+            'available': True
+        })
+        print(f"[OK] VAE initialized successfully on {device}")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize VAE: {e}")
+        vae_resources['initialized'] = True
+        vae_resources['available'] = False
+
+    return vae_resources
+
+
+def translate_with_vae(text, gender='neutral', top_k=5, rerank=False):
+    """Translate sentence using VAE latent blending of top-k matches."""
+    vae = get_vae_resources()
+    if not vae['available']:
+        return None
+
+    matcher = get_sentence_matcher()
+    matches = matcher.search(text, top_k=top_k, rerank=rerank)
+    
+    if not matches:
+        return None
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    z_list = []
+    weights = []
+    
+    cache = vae['cache']
+    for m in matches:
+        key = m['pkl_file']
+        if key in cache:
+            z_list.append(cache[key])
+            weights.append(m['similarity'])
+    
+    if not z_list:
+        return None
+
+    # Weighted blend in latent space
+    z = np.stack(z_list, axis=0)
+    w = np.asarray(weights, dtype=np.float32)
+    w = w / (w.sum() + 1e-8)
+    z_blend = (z * w[:, None]).sum(axis=0).astype(np.float32)
+    
+    # Decode
+    with torch.no_grad():
+        z_tensor = torch.from_numpy(z_blend).unsqueeze(0).to(device)
+        pred_norm = vae['model'].decode(z_tensor).squeeze(0).cpu().numpy()
+    
+    # Denormalize
+    stats = vae['stats']
+    pred = (pred_norm * stats.std) + stats.mean
+    
+    # Post-process root
+    if vae['config'].get("root_relative", True) and pred.shape[1] == 182:
+        pred[:, 179:182] = 0.0
+
+    return {
+        'pose_sequence': pred,
+        'strategy': 'vae_blend',
+        'confidence': float(np.mean(weights)),
+        'matches': matches
+    }
+
+
+def _extract_smplx_params_array(pose_data):
+    """Return a numpy array of shape [T, D] from pose_data loaded by SentenceToSMPLX/WordToSMPLX."""
+    smplx_params = pose_data.get('smplx')
+
+    # Some loaders return {'smplx': {'smooth_smplx': ..., ...}}
+    if isinstance(smplx_params, dict):
+        if 'smooth_smplx' in smplx_params:
+            smplx_params = smplx_params['smooth_smplx']
+        else:
+            first_key = list(smplx_params.keys())[0]
+            smplx_params = smplx_params[first_key]
+
+    if torch.is_tensor(smplx_params):
+        smplx_params = smplx_params.detach().cpu().numpy()
+
+    if isinstance(smplx_params, list):
+        smplx_params = np.stack(smplx_params)
+
+    smplx_params = np.asarray(smplx_params)
+    if smplx_params.ndim != 2:
+        raise ValueError(f"Unexpected smplx params shape: {smplx_params.shape}")
+    return smplx_params
+
+
+def _peek_num_frames_from_pkl(pkl_path: str):
+    """Best-effort: return number of frames in a How2Sign pose pkl without fully processing tensors."""
+
+    class CPU_Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == 'torch.storage' and name == '_load_from_bytes':
+                return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+            return super().find_class(module, name)
+
+    with open(pkl_path, 'rb') as f:
+        data = CPU_Unpickler(f).load()
+
+    if not isinstance(data, dict) or 'smplx' not in data:
+        return None
+
+    smplx = data.get('smplx')
+    if isinstance(smplx, dict) and smplx:
+        smplx = smplx.get('smooth_smplx', next(iter(smplx.values())))
+
+    try:
+        if isinstance(smplx, list) or isinstance(smplx, tuple):
+            return len(smplx)
+        if hasattr(smplx, 'shape') and len(smplx.shape) >= 1:
+            return int(smplx.shape[0])
+    except Exception:
+        return None
+    return None
 
 # --- Helper: Extract YouTube video ID ---
 def extract_video_id(url):
@@ -206,6 +386,284 @@ def render_sentence_api():
         import traceback
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/render_text_mp4', methods=['POST'])
+def render_text_mp4():
+    """Render a single input sentence to MP4 and return it directly (video/mp4).
+
+    Request JSON:
+      {"text": "I go to school.", "gender": "neutral", "fps": 15, "max_frames": 180, "use_cache": true}
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        text = (data.get('text') or '').strip()
+        gender = (data.get('gender') or 'neutral').lower()
+        fps = int(data.get('fps') or 15)
+        max_frames = data.get('max_frames', 180)
+        use_cache = bool(data.get('use_cache', True))
+        rerank = bool(data.get('rerank', False))
+
+        if not text:
+            return jsonify({'error': 'Missing text'}), 400
+        if fps <= 0 or fps > 60:
+            return jsonify({'error': 'fps must be in 1..60'}), 400
+
+        if max_frames is not None:
+            max_frames = int(max_frames)
+            if max_frames <= 0:
+                return jsonify({'error': 'max_frames must be positive or null'}), 400
+
+        # Deterministic cache key (MP4 response)
+        key_material = f"v2_mp4|{gender}|{fps}|{max_frames}|{text.lower()}".encode('utf-8')
+        key = hashlib.sha1(key_material).hexdigest()[:16]
+        cache_path = os.path.join(text_cache_dir, f"text_{key}.mp4")
+
+        if use_cache and os.path.exists(cache_path):
+            return send_file(cache_path, mimetype='video/mp4')
+
+        matcher = get_sentence_matcher()
+        _, sentence_animator = get_animators(gender)
+
+        result = matcher.translate_sentence(text, verbose=False, rerank=rerank)
+        if result.get('strategy') == 'failed' or not result.get('matches'):
+            return jsonify({'error': 'No matches found', 'details': result}), 404
+
+        # Heuristic: if chunking finds <2 usable chunks, prefer a single full-sentence match
+        if result.get('strategy') == 'chunked' and len(result.get('matches', [])) < 2:
+            best_full = matcher.search(text, top_k=1, rerank=rerank)
+            if best_full:
+                result = {
+                    'strategy': 'fallback',
+                    'matches': [best_full[0]],
+                    'confidence': float(best_full[0].get('similarity', 0.0)),
+                    'input_sentence': text,
+                    'warning': 'Chunking produced too few matches; using best full-sentence match'
+                }
+
+        pose_sequences = []
+        if result['strategy'] == 'chunked':
+            for chunk_match in result['matches']:
+                match = chunk_match['match']
+                pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
+                pose_sequences.append(_extract_smplx_params_array(pose_data))
+        else:
+            match = result['matches'][0]
+            pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
+            pose_sequences.append(_extract_smplx_params_array(pose_data))
+
+        all_params = np.vstack(pose_sequences)
+        pose_data_out = {'smplx': all_params, 'gender': gender, 'fps': fps}
+
+        sentence_animator.render_animation(
+            pose_data_out,
+            save_path=cache_path,
+            fps=fps,
+            max_frames=max_frames,
+        )
+
+        return send_file(cache_path, mimetype='video/mp4')
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/render_text', methods=['POST'])
+def render_text_json():
+    """Render a single input sentence, return JSON with match metadata + cached video URL."""
+    try:
+        data = request.get_json(force=True, silent=True)
+        if data is None:
+            raw = request.get_data(cache=False, as_text=True) or ''
+            return jsonify({
+                'error': 'Invalid JSON body',
+                'hint': 'Send valid JSON with double-quoted keys/strings, e.g. {"text":"I love this"}',
+                'received_prefix': raw[:200],
+            }), 400
+        data = data or {}
+        text = (data.get('text') or '').strip()
+        gender = (data.get('gender') or 'neutral').lower()
+        fps = int(data.get('fps') or 15)
+        max_frames = data.get('max_frames', 180)
+        use_cache = bool(data.get('use_cache', True))
+        min_frames = data.get('min_frames', None)
+        candidate_k = int(data.get('candidate_k') or 5)
+        rerank = bool(data.get('rerank', False))
+        use_vae = bool(data.get('use_vae', False))
+
+        if not text:
+            return jsonify({'error': 'Missing text'}), 400
+        if fps <= 0 or fps > 60:
+            return jsonify({'error': 'fps must be in 1..60'}), 400
+
+        if max_frames is not None:
+            max_frames = int(max_frames)
+            if max_frames <= 0:
+                return jsonify({'error': 'max_frames must be positive or null'}), 400
+
+        if min_frames is not None:
+            min_frames = int(min_frames)
+            if min_frames <= 0:
+                return jsonify({'error': 'min_frames must be positive or null'}), 400
+
+        if candidate_k < 1 or candidate_k > 25:
+            return jsonify({'error': 'candidate_k must be in 1..25'}), 400
+
+        key_material = f"v2_mp4|{gender}|{fps}|{max_frames}|{use_vae}|{text.lower()}".encode('utf-8')
+        key = hashlib.sha1(key_material).hexdigest()[:16]
+        cache_filename = f"text_{key}.mp4"
+        cache_path = os.path.join(text_cache_dir, cache_filename)
+
+        matcher = get_sentence_matcher()
+        debug = None
+        
+        # --- Strategy Selection ---
+        result = None
+        vae_res = None
+        
+        if use_vae:
+            vae_res = translate_with_vae(text, gender=gender, top_k=candidate_k, rerank=rerank)
+            if vae_res:
+                result = {
+                    'strategy': 'vae_blend',
+                    'matches': vae_res['matches'],
+                    'confidence': vae_res['confidence'],
+                    'input_sentence': text,
+                    'warning': 'VAE latent blending used'
+                }
+            else:
+                print("[INFO] VAE failed or not available, falling back to standard matching")
+
+        if result is None:
+            result = matcher.translate_sentence(text, verbose=False, rerank=rerank)
+        if result.get('strategy') == 'failed' or not result.get('matches'):
+            return jsonify({'error': 'No matches found', 'details': result}), 404
+
+        # Optional: if the best match is very short, try to pick a longer near-best candidate.
+        if min_frames is not None and result.get('strategy') in ('full', 'fallback'):
+            best = result['matches'][0]
+            best_frames = _peek_num_frames_from_pkl(best['pkl_path'])
+            if best_frames is not None and best_frames < min_frames:
+                candidates = matcher.search(text, top_k=candidate_k, rerank=rerank)
+                # Require at least medium confidence; also keep candidates reasonably close to best.
+                best_sim = float(best.get('similarity', 0.0) or 0.0)
+                min_sim = max(matcher.MEDIUM_CONFIDENCE, best_sim - 0.10)
+                chosen = None
+                chosen_frames = None
+                for cand in candidates:
+                    sim = float(cand.get('similarity', 0.0) or 0.0)
+                    if sim < min_sim:
+                        continue
+                    n = _peek_num_frames_from_pkl(cand['pkl_path'])
+                    if n is None:
+                        continue
+                    if n >= min_frames and (chosen is None or n > chosen_frames):
+                        chosen = cand
+                        chosen_frames = n
+                debug = {
+                    'min_frames': min_frames,
+                    'candidate_k': candidate_k,
+                    'best': {
+                        'pkl_file': best.get('pkl_file'),
+                        'similarity': float(best.get('similarity', 0.0) or 0.0),
+                        'frames': best_frames,
+                    },
+                    'chosen': None if chosen is None else {
+                        'pkl_file': chosen.get('pkl_file'),
+                        'similarity': float(chosen.get('similarity', 0.0) or 0.0),
+                        'frames': chosen_frames,
+                    },
+                    'min_sim': float(min_sim),
+                }
+                if chosen is not None:
+                    result = {
+                        'strategy': 'full',
+                        'matches': [chosen],
+                        'confidence': float(chosen.get('similarity', 0.0) or 0.0),
+                        'input_sentence': text,
+                        'warning': f"Chose longer near-best match ({chosen_frames} frames) over short best ({best_frames} frames)"
+                    }
+
+        if result.get('strategy') == 'chunked' and len(result.get('matches', [])) < 2:
+            best_full = matcher.search(text, top_k=1, rerank=rerank)
+            if best_full:
+                result = {
+                    'strategy': 'fallback',
+                    'matches': [best_full[0]],
+                    'confidence': float(best_full[0].get('similarity', 0.0)),
+                    'input_sentence': text,
+                    'warning': 'Chunking produced too few matches; using best full-sentence match'
+                }
+
+        if not (use_cache and os.path.exists(cache_path)):
+            _, sentence_animator = get_animators(gender)
+            pose_sequences = []
+            
+            if result['strategy'] == 'vae_blend' and vae_res:
+                pose_sequences.append(vae_res['pose_sequence'])
+            elif result['strategy'] == 'chunked':
+                for chunk_match in result['matches']:
+                    match = chunk_match['match']
+                    pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
+                    pose_sequences.append(_extract_smplx_params_array(pose_data))
+            else:
+                match = result['matches'][0]
+                pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
+                pose_sequences.append(_extract_smplx_params_array(pose_data))
+
+            all_params = np.vstack(pose_sequences)
+            pose_data_out = {'smplx': all_params, 'gender': gender, 'fps': fps}
+            sentence_animator.render_animation(
+                pose_data_out,
+                save_path=cache_path,
+                fps=fps,
+                max_frames=max_frames,
+            )
+
+        # Summarize match info for debugging
+        if result['strategy'] == 'chunked':
+            match_summary = [
+                {
+                    'chunk': cm.get('input_chunk', ''),
+                    'sentence': cm.get('match', {}).get('sentence', ''),
+                    'similarity': cm.get('match', {}).get('similarity', 0.0),
+                    'pkl_file': cm.get('match', {}).get('pkl_file', '')
+                }
+                for cm in result.get('matches', [])
+            ]
+        else:
+            m = result['matches'][0]
+            match_summary = {
+                'sentence': m.get('sentence', ''),
+                'similarity': m.get('similarity', 0.0),
+                'pkl_file': m.get('pkl_file', '')
+            }
+
+        return jsonify({
+            'status': 'success',
+            'text': text,
+            'gender': gender,
+            'fps': fps,
+            'max_frames': max_frames,
+            'strategy': result.get('strategy'),
+            'confidence': float(result.get('confidence', 0.0) or 0.0),
+            'match': match_summary,
+            'warning': result.get('warning'),
+            'debug': debug,
+            'url': request.host_url.rstrip('/') + f"/output/text_cache/{cache_filename}",
+        })
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/output/text_cache/<path:filename>')
+def download_text_cache(filename):
+    return send_from_directory(text_cache_dir, filename)
 
 # --- Endpoint: Extract transcript only (preview) ---
 @app.route('/extract_transcript', methods=['POST'])
@@ -481,6 +939,7 @@ def asl_from_youtube_sentences():
     _, sentence_animator = get_animators(gender)
     
     # Match each sentence
+    use_vae = bool(data.get('use_vae', False))
     translation_results = []
     pose_sequences = []
     
@@ -488,7 +947,20 @@ def asl_from_youtube_sentences():
         print(f"\n[{idx+1}/{len(sentences)}] Processing: {sentence[:80]}...")
         
         try:
-            result = matcher.translate_sentence(sentence, verbose=True)
+            # Try VAE if requested
+            vae_res = None
+            if use_vae:
+                vae_res = translate_with_vae(sentence, gender=gender, top_k=5)
+            
+            if vae_res:
+                result = {
+                    'strategy': 'vae_blend',
+                    'matches': vae_res['matches'],
+                    'confidence': vae_res['confidence'],
+                    'input_sentence': sentence
+                }
+            else:
+                result = matcher.translate_sentence(sentence, verbose=True)
             
             # Build enhanced result with all fields Streamlit expects
             frame_count = 0
@@ -496,7 +968,14 @@ def asl_from_youtube_sentences():
             alternatives = []
             
             # Load pose data based on strategy
-            if result['strategy'] == 'full':
+            if result['strategy'] == 'vae_blend' and vae_res:
+                matched_text = f"VAE Blend ({len(vae_res['matches'])} matches)"
+                smplx_params = vae_res['pose_sequence']
+                frame_count = smplx_params.shape[0]
+                pose_sequences.append(smplx_params)
+                alternatives = [{'text': m['sentence'], 'confidence': m['similarity']} for m in result['matches']]
+
+            elif result['strategy'] == 'full':
                 # Single sentence match
                 match = result['matches'][0]
                 matched_text = match['sentence']  # Changed from 'text' to 'sentence'
@@ -680,11 +1159,12 @@ def asl_from_youtube_sentences():
                 'low': len(low_conf)
             },
             'strategy_breakdown': strategy_counts,
-            'avg_confidence': float(np.mean([r.get('confidence', 0) for r in successful])) if successful else 0.0
+            'avg_confidence': float(np.mean([r.get('confidence', 0) for r in successful])) if successful else 0.0,
+            'vae_used': use_vae
         },
         'truncated': truncated,
         'subtitles_enabled': bool(include_subtitles),
-        'note': 'This translation uses semantic sentence matching from 30K+ How2Sign dataset'
+        'note': f"This translation uses semantic sentence matching from 30K+ How2Sign dataset{' with VAE blending' if use_vae else ''}"
     })
 
 # --- Serve generated videos ---
@@ -692,9 +1172,9 @@ def asl_from_youtube_sentences():
 def download_file(filename):
     return send_from_directory(output_dir, filename)
 
-@app.route('/')
-def home():
-    return "SMPLX ASL Backend is running. Use the /asl_from_youtube endpoint."
+@app.route('/health')
+def health():
+    return "ok"
 
 if __name__ == '__main__':
     app.run(port=5000, debug=False, use_reloader=False)
