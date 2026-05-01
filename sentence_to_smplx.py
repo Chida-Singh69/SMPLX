@@ -313,7 +313,7 @@ class SentenceToSMPLX:
                 return item.get('text', '')
         return None
 
-    def render_animation(self, pose_data, save_path=None, fps=15, max_frames=None, subtitle_timeline=None):
+    def render_animation(self, pose_data, save_path=None, fps=15, max_frames=None, subtitle_timeline=None, use_full_params=False):
         """
         Render SMPL-X animation from pose data using pyrender.
         
@@ -336,6 +336,7 @@ class SentenceToSMPLX:
         if isinstance(smplx_data, np.ndarray) and isinstance(smplx_data[0], np.ndarray):
             smplx_params = np.stack(smplx_data)
             N = smplx_params.shape[0]
+            D = smplx_params.shape[1]
             
             # Limit frames if requested (for previewing long sentences)
             if max_frames is not None and N > max_frames:
@@ -352,6 +353,20 @@ class SentenceToSMPLX:
             left_hand_pose_np = smplx_params[:, 66:111]
             # Right hand pose: 45 values for finger/hand rotation
             right_hand_pose_np = smplx_params[:, 111:156]
+
+            # Optional extra channels for full182 / pose169
+            # Default is to ignore these for stability unless explicitly enabled.
+            jaw_pose = None
+            betas = None
+            expression = None
+
+            if use_full_params:
+                if D >= 159:
+                    jaw_pose = torch.tensor(smplx_params[:, 156:159], dtype=torch.float32, device=self.device)
+                if D >= 169:
+                    betas = torch.tensor(smplx_params[:, 159:169], dtype=torch.float32, device=self.device)
+                if D >= 179:
+                    expression = torch.tensor(smplx_params[:, 169:179], dtype=torch.float32, device=self.device)
             
             # Hand Pose Smoothing - Gaussian filtering to reduce jitter
             left_hand_pose_np = self.smooth_and_clamp_hand_pose(left_hand_pose_np)
@@ -374,6 +389,11 @@ class SentenceToSMPLX:
             bp = body_pose[i].unsqueeze(0)
             lhp = left_hand_pose[i].unsqueeze(0)
             rhp = right_hand_pose[i].unsqueeze(0)
+
+            jp = jaw_pose[i].unsqueeze(0) if jaw_pose is not None else None
+            be = betas[i].unsqueeze(0) if betas is not None else None
+            ex = expression[i].unsqueeze(0) if expression is not None else None
+            tr = None
             
             # Error Handling - Replace NaN values with neutral (zero) poses
             if torch.isnan(lhp).any() or torch.isnan(rhp).any():
@@ -383,25 +403,39 @@ class SentenceToSMPLX:
             
             # Call SMPL-X model with pose parameters
             try:
-                output = self.smplx_model(
-                    body_pose=bp,
-                    right_hand_pose=rhp,
-                    left_hand_pose=lhp,
-                    global_orient=go,
-                    betas=torch.zeros((1, 10), device=self.device),
-                    return_verts=True
-                )
+                model_kwargs = {
+                    "body_pose": bp,
+                    "right_hand_pose": rhp,
+                    "left_hand_pose": lhp,
+                    "global_orient": go,
+                    "return_verts": True,
+                }
+                model_kwargs["betas"] = be if be is not None else torch.zeros((1, 10), device=self.device)
+                if jp is not None:
+                    model_kwargs["jaw_pose"] = jp
+                if ex is not None:
+                    model_kwargs["expression"] = ex
+                # Keep root-relative rendering (ignore translation)
+
+                output = self.smplx_model(**model_kwargs)
             except Exception as e:
                 # Fallback: regenerate frame with neutral hand poses
                 print(f"Warning: SMPL-X error at frame {i}, using neutral hands: {e}")
-                output = self.smplx_model(
-                    body_pose=bp,
-                    right_hand_pose=torch.zeros_like(rhp),
-                    left_hand_pose=torch.zeros_like(lhp),
-                    global_orient=go,
-                    betas=torch.zeros((1, 10)),
-                    return_verts=True
-                )
+                model_kwargs = {
+                    "body_pose": bp,
+                    "right_hand_pose": torch.zeros_like(rhp),
+                    "left_hand_pose": torch.zeros_like(lhp),
+                    "global_orient": go,
+                    "return_verts": True,
+                }
+                model_kwargs["betas"] = be if be is not None else torch.zeros((1, 10), device=self.device)
+                if jp is not None:
+                    model_kwargs["jaw_pose"] = jp
+                if ex is not None:
+                    model_kwargs["expression"] = ex
+                # Keep root-relative rendering (ignore translation)
+
+                output = self.smplx_model(**model_kwargs)
             
             # Get 3D vertex positions
             vertices = output.vertices.detach().cpu().numpy().squeeze()
@@ -428,6 +462,17 @@ class SentenceToSMPLX:
             print(f"[SAVING] Saving video to {save_path}...")
             imageio.mimsave(save_path, frames, fps=fps)
             print(f"[SUCCESS] Video saved!")
+
+        # In server scenarios, keeping a persistent OffscreenRenderer across requests
+        # can cause intermittent OpenGL/context failures. Recreate it per call.
+        if self.renderer is not None:
+            try:
+                self.renderer.delete()
+            except Exception:
+                pass
+            self.renderer = None
+            self.renderer_initialized = False
+            self._renderer_init_attempted = False
             
         return frames
     
@@ -505,7 +550,7 @@ class SentenceToSMPLX:
         except Exception as e:
             # Only print once to avoid spam
             if not hasattr(self, '_render_error_printed'):
-                print(f"[INFO] Pyrender rendering unavailable, using matplotlib fallback")
+                print(f"[INFO] Pyrender render failed ({type(e).__name__}: {e}); using matplotlib fallback")
                 self._render_error_printed = True
             return self._render_trimesh_frame_fallback(mesh)
     

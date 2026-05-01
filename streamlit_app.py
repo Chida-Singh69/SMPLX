@@ -186,22 +186,15 @@ st.sidebar.markdown("---")
 global_gender = st.sidebar.selectbox("Avatar Gender", ["NEUTRAL", "MALE", "FEMALE"], index=0).lower()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Settings")
+st.sidebar.markdown("### 🧠 AI Model Settings")
 api_host = st.sidebar.text_input("Backend API Host", value="http://localhost:5000")
-
-device_mode = st.sidebar.selectbox(
-    "Device for sentence rendering",
-    ["Auto", "GPU", "CPU"],
-    index=0,
-    help="Applies to the Sentence Animations tab. CPU is recommended for stability."
+use_vae = st.sidebar.checkbox(
+    "Use VAE Blending", 
+    value=False, 
+    help="Enable experimental VAE latent blending for smoother, novel motions generated from top-k semantic matches."
 )
 
-preferred_device = "cpu"
-if device_mode == "GPU":
-    st.sidebar.warning("GPU mode is currently disabled for this app to avoid runtime instability. Using CPU.")
-elif device_mode == "Auto":
-    st.sidebar.caption("Auto mode currently resolves to CPU for stable rendering.")
-
+preferred_device = "cpu" # Default for stable rendering
 st.sidebar.write(f"Active device: {preferred_device.upper()}")
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -345,10 +338,12 @@ with tab1:
                 try:
                     payload = {
                         "url": st.session_state['youtube_url'],
-                        "gender": global_gender
+                        "gender": global_gender,
+                        "use_vae": use_vae,
+                        "max_sentences": 10 # Default for this UI
                     }
                     response = requests.post(
-                        f"{api_host}/asl_from_youtube",
+                        f"{api_host}/asl_from_youtube_sentences",
                         json=payload,
                         timeout=120
                     )
@@ -356,7 +351,6 @@ with tab1:
                     if response.status_code == 200:
                         result = response.json()
                         video_url = result.get("url")
-                        words_found = result.get("words", [])
                         
                         if video_url:
                             # Extract filename from URL
@@ -364,19 +358,41 @@ with tab1:
                             video_path = os.path.join(output_dir, video_filename)
                             
                             if os.path.exists(video_path):
-                                st.success("ASL video generated successfully.")
+                                st.success("ASL video generated successfully!")
                                 
-                                st.markdown("### Generated ASL Animation")
-                                st.video(video_path)
+                                # Layout for video and stats
+                                v_col, s_col = st.columns([3, 2])
                                 
-                                # Download button
-                                with open(video_path, "rb") as file:
-                                    st.download_button(
-                                        label="Download ASL Video",
-                                        data=file,
-                                        file_name=video_filename,
-                                        mime="video/mp4"
-                                    )
+                                with v_col:
+                                    st.markdown("### Generated ASL Animation")
+                                    st.video(video_path)
+                                    
+                                    # Download button
+                                    with open(video_path, "rb") as file:
+                                        st.download_button(
+                                            label="Download ASL Video",
+                                            data=file,
+                                            file_name=video_filename,
+                                            mime="video/mp4"
+                                        )
+                                
+                                with s_col:
+                                    stats = result.get('statistics', {})
+                                    st.markdown("### Translation Stats")
+                                    st.metric("Transcript Coverage", f"{stats.get('coverage_percentage', 0):.1f}%")
+                                    st.metric("Avg Confidence", f"{stats.get('avg_confidence', 0):.2f}")
+                                    st.metric("VAE Active", "Yes" if stats.get('vae_used') else "No")
+                                    
+                                    if 'strategy_breakdown' in stats:
+                                        with st.expander("Strategy Details"):
+                                            st.json(stats['strategy_breakdown'])
+
+                                # Show matched sentences
+                                with st.expander("Detailed Sentence Matching"):
+                                    for s in result.get('sentences', []):
+                                        st.write(f"**Text:** {s['original']}")
+                                        st.write(f"**Match:** {s['match']} ({s['strategy']})")
+                                        st.divider()
                             else:
                                 st.error("Video file was generated but not found on disk.")
                         else:

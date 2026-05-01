@@ -1,109 +1,107 @@
-# 🤟 YouTube to ASL - Sentence Translation System
+# 🤟 SMPL-X | ASL Animation Suite
 
-3D American Sign Language animation generator using SMPL-X body models with semantic sentence matching.
+An advanced 3D American Sign Language (ASL) generation system utilizing **SMPL-X parametric models**, **FAISS-powered semantic matching**, and **VAE latent space blending**.
+
+---
 
 ## 🚀 Quick Start
 
-### 1. Install
-```bash
+### 1. Installation
+Run the automated installation script for your OS:
+```powershell
 # Windows
-install_sentence_system.bat
-
-# Linux/Mac  
-bash install_sentence_system.sh
+.\install_sentence_system.bat
 ```
 
-### 2. Run Server
-```bash
+### 2. Model Weights
+The VAE model weights and latent cache are included in the repository for easy access:
+- `checkpoints/vae_h2s/vae_best.pt`
+- `checkpoints/vae_h2s/norm_stats.npz`
+- `checkpoints/vae_h2s/latent_cache.npz`
+
+### 3. Launch the System
+Start the backend server and the premium web interface:
+```powershell
+# Start Backend
 python app.py
-```
 
-### 3. Launch Web UI
-```bash
-# Sentence-level (recommended - 30K dataset)
-streamlit run streamlit_youtube_sentences.py
-
-# Word-level (legacy - 104 words)
+# Start Main UI (Premium Interface)
 streamlit run streamlit_app.py
 ```
 
-## 📊 Features
+### 4. Direct API Usage (CURL Example)
+You can trigger animations directly from the command line:
+```powershell
+# Create payload
+Set-Content -Path payload.json -Value '{"text":"I have really worked hard on this","gender":"neutral","fps":15,"max_frames":60,"use_cache":false,"use_vae":true}' -NoNewline
 
-### Sentence-Level Translation (NEW)
-- ✅ **30K How2Sign sentences** with semantic matching
-- ✅ **FAISS vector search** for similarity
-- ✅ **Phrase chunking fallback** for better coverage
-- ✅ **Confidence scoring** (High/Medium/Low)
-- ✅ **70-85% transcript coverage**
-
-### Word-Level Translation (Legacy)
-- ✅ **104 words** with direct lookup
-- ✅ **5-15% transcript coverage**
-- ✅ **Fast rendering**
-
-## � API Endpoints
-
-### Sentence Translation
-```bash
-POST http://localhost:5000/asl_from_youtube_sentences
-{
-  "url": "https://youtube.com/watch?v=VIDEO_ID",
-  "max_sentences": 5
-}
+# Send request
+curl.exe -i -X POST "http://127.0.0.1:5000/api/render_text" -H "Content-Type: application/json" --data-binary '@payload.json'
 ```
 
-### Word Translation (Legacy)
-```bash
-POST http://localhost:5000/asl_from_youtube
-{
-  "url": "https://youtube.com/watch?v=VIDEO_ID"
-}
-```
+---
+
+## 🌟 Key Features
+
+### 🧠 VAE Motion Prior (NEW)
+- **Latent Blending**: Interpolates between top-k semantic matches in latent space to generate smooth, novel animations.
+- **Improved Continuity**: Reduces jitter by blending motion encodings rather than simple concatenation.
+
+### 📊 Semantic Sentence Matching
+- **30K How2Sign Dataset**: Massive library of high-quality sentence-level signs.
+- **FAISS Vector Search**: Ultra-fast semantic lookups using `sentence-transformers`.
+- **Hybrid Strategy**: Uses full-sentence matching with a phrase-level chunking fallback for 85%+ coverage.
+
+### 🎨 Premium Web Interface
+- **Dynamic YouTube Translation**: Paste a URL, extract transcript, and generate ASL overlay.
+- **Interactive Poses Explorer**: Inspect and assemble raw 3D pose data frame-by-frame.
+- **Gender Customization**: Support for Neutral, Male, and Female SMPL-X body types.
+
+---
+
+## 🛠️ API Documentation
+
+### **Text to Animation**
+`POST /api/render_text`
+- `text`: Input English sentence.
+- `use_vae`: (bool) Enable latent blending.
+- `gender`: neutral | male | female
+- `fps`: Default 15.
+
+### **YouTube to ASL**
+`POST /asl_from_youtube_sentences`
+- `url`: YouTube Video URL.
+- `max_sentences`: Max lines to process.
+- `use_vae`: (bool) Enable latent blending.
+
+---
 
 ## 📁 Project Structure
 
-```
+```text
 SMPLX/
-├── app.py                              # Flask API server
-├── sentence_matcher.py                 # Semantic matching (FAISS)
-├── sentence_to_smplx.py               # 3D renderer (sentences)
-├── word_to_smplx.py                   # 3D renderer (words)
-├── streamlit_youtube_sentences.py     # Web UI (sentence-level)
-├── streamlit_app.py                   # Web UI (word-level)
-├── test_sentence_translation.py       # Testing
-│
-├── how2sign_mapping.json              # 30K sentence mappings
-├── how2sign_pkls_cropTrue_shapeFalse/ # Sentence pose data
-├── filtered_video_to_gloss.json       # 104 word mappings
-├── word-level-dataset-cpu-fixed/      # Word pose data
-└── output/                            # Generated videos
+├── app.py                      # Flask API (Core logic & VAE Inference)
+├── vae_model.py                # SignLanguageVAE architecture
+├── sentence_matcher.py         # FAISS & Semantic lookup engine
+├── sentence_to_smplx.py        # 3D SMPL-X rendering pipeline
+├── streamlit_app.py            # Main Premium Web UI
+├── checkpoints/                # Model weights (vae_best.pt, etc.)
+├── models/                     # SMPL-X parametric files
+└── output/                     # Generated MP4 animations
 ```
 
-## ⚙️ Tech Stack
-
-- **Semantic Matching**: sentence-transformers, FAISS
-- **3D Model**: SMPL-X parametric body model
-- **Rendering**: Pyrender, OpenGL
-- **Backend**: Flask, PyTorch
-- **Frontend**: Streamlit
-- **Dataset**: 30K How2Sign + 104 words
-
-## 📚 Documentation
-
-- **QUICKSTART.md** - 5-minute guide
-- **GETTING_STARTED.md** - Detailed setup
-- **SENTENCE_TRANSLATION_README.md** - Technical docs
+---
 
 ## 🎓 Academic Project
 
 **Dayananda Sagar College of Engineering**  
 Computer Science and Design (B.E.)  
-Team: Akriti Khetan, Bhoomika K S, Chidananda Singh A  
-Guide: Prof. Nayana U Shinde
+**Team:** Akriti Khetan, Bhoomika K S, Chidananda Singh A  
+**Guide:** Prof. Nayana U Shinde
 
-## ⚠️ Notes
+---
 
-- **First request**: 2-5 min (builds FAISS index)
-- **Semantic matching**: Not true translation, finds similar sentences
-- **Best for**: Conversational/educational content
-- **Lower accuracy**: Abstract/motivational content
+## ⚠️ Important Notes
+- **First Load**: The first request takes ~2 minutes to build the FAISS index in memory.
+- **OpenGL**: Requires a GPU with OpenGL support for headless rendering (Pyrender).
+- **Dataset**: Built upon the How2Sign dataset (30,000+ annotated sentences).

@@ -1,134 +1,112 @@
 import os
-import torch
-import pickle
-import numpy as np
 import re
+import pickle
+from typing import Dict, List, Optional
+
+import numpy as np
+
 from sentence_to_smplx import SentenceToSMPLX
 
+
 class PoseAssembler:
-    def __init__(self, poses_root):
+    """Assemble per-frame pose pickles into SMPL-X animation parameters."""
+
+    FRAME_FILE_PATTERN = re.compile(r"_(\d+)_3D\.pkl$")
+
+    def __init__(self, poses_root: str):
         self.poses_root = poses_root
 
-    def list_folders(self):
-        """List all sequence folders in the poses directory."""
-        if not os.path.exists(self.poses_root):
+    def list_folders(self) -> List[str]:
+        """Return folder names that contain frame pose files."""
+        if not os.path.isdir(self.poses_root):
             return []
-        folders = [d for d in os.listdir(self.poses_root) if os.path.isdir(os.path.join(self.poses_root, d))]
-        return sorted(folders)
 
-    def assemble_sequence(self, folder_name):
+        folders: List[str] = []
+        for name in sorted(os.listdir(self.poses_root)):
+            full = os.path.join(self.poses_root, name)
+            if not os.path.isdir(full):
+                continue
+            if any(f.endswith("_3D.pkl") for f in os.listdir(full)):
+                folders.append(name)
+        return folders
+
+    def _frame_files(self, folder_path: str) -> List[str]:
+        files = [f for f in os.listdir(folder_path) if f.endswith("_3D.pkl")]
+
+        def frame_index(filename: str) -> int:
+            match = self.FRAME_FILE_PATTERN.search(filename)
+            return int(match.group(1)) if match else 10**9
+
+        return sorted(files, key=lambda f: (frame_index(f), f))
+
+    @staticmethod
+    def _to_1d_np(value, expected: int, key: str) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        if arr.shape[0] != expected:
+            raise ValueError(f"Invalid shape for '{key}': expected {expected}, got {arr.shape[0]}")
+        return arr
+
+    @staticmethod
+    def _load_pickle(path: str) -> Dict:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+    def assemble_folder(self, folder_name: str) -> Dict[str, np.ndarray]:
         """
-        Assemble a sequence of SMPL-X parameters from a folder of per-frame pickles.
+        Load all frame files in a folder and build an animation dict.
+
+        Output format:
+            {
+                'smplx': np.ndarray [N, 156],
+                'fps': 15
+            }
         """
         folder_path = os.path.join(self.poses_root, folder_name)
-        if not os.path.exists(folder_path):
-            raise FileNotFoundError(f"Folder not found: {folder_path}")
+        if not os.path.isdir(folder_path):
+            raise FileNotFoundError(f"Pose folder not found: {folder_path}")
 
-        # List all .pkl files
-        pkl_files = [f for f in os.listdir(folder_path) if f.endswith('_3D.pkl')]
-        
-        # Sort files numerically by frame index
-        # Expecting format: name_frameindex_3D.pkl
-        def get_frame_index(filename):
-            match = re.search(r'_(\d+)_3D\.pkl$', filename)
-            return int(match.group(1)) if match else 0
+        frame_files = self._frame_files(folder_path)
+        if not frame_files:
+            raise ValueError(f"No frame pickle files found in: {folder_path}")
 
-        pkl_files.sort(key=get_frame_index)
+        frames: List[np.ndarray] = []
+        for filename in frame_files:
+            frame_path = os.path.join(folder_path, filename)
+            frame_data = self._load_pickle(frame_path)
 
-        all_params = []
-        print(f"[ASSEMBLER] Loading {len(pkl_files)} frames from {folder_name}...")
-
-        for i, f in enumerate(pkl_files):
-            pkl_path = os.path.join(folder_path, f)
             try:
-                with open(pkl_path, 'rb') as pf:
-                    # Try standard pickle since my test showed it's likely standard pickle
-                    try:
-                        data = pickle.load(pf)
-                    except:
-                        # Fallback to torch.load
-                        pf.seek(0)
-                        data = torch.load(pf, map_location='cpu', weights_only=False)
+                root = self._to_1d_np(frame_data["smplx_root_pose"], 3, "smplx_root_pose")
+                body = self._to_1d_np(frame_data["smplx_body_pose"], 63, "smplx_body_pose")
+                left = self._to_1d_np(frame_data["smplx_lhand_pose"], 45, "smplx_lhand_pose")
+                right = self._to_1d_np(frame_data["smplx_rhand_pose"], 45, "smplx_rhand_pose")
+            except KeyError as exc:
+                raise KeyError(f"Missing key {exc} in frame file: {frame_path}") from exc
 
-                # Extract and concatenate the main pose parameters
-                # Expected keys from my inspection: 
-                # smplx_root_pose (3,), smplx_body_pose (63,), smplx_lhand_pose (45,), smplx_rhand_pose (45,)
-                root = data.get('smplx_root_pose', np.zeros(3))
-                body = data.get('smplx_body_pose', np.zeros(63))
-                lhand = data.get('smplx_lhand_pose', np.zeros(45))
-                rhand = data.get('smplx_rhand_pose', np.zeros(45))
-                
-                # Check shapes and flatten if necessary
-                def ensure_flat(arr):
-                    if hasattr(arr, 'cpu'): arr = arr.cpu().numpy()
-                    return arr.flatten()
+            frames.append(np.concatenate([root, body, left, right], axis=0).astype(np.float32))
 
-                combined = np.concatenate([
-                    ensure_flat(root),
-                    ensure_flat(body),
-                    ensure_flat(lhand),
-                    ensure_flat(rhand)
-                ])
-                
-                all_params.append(combined)
-            except Exception as e:
-                print(f"  [WARNING] Error loading frame {f}: {e}")
-
-        if not all_params:
-            raise ValueError(f"No frames could be loaded from {folder_path}")
-
-        # Stack into (N, 156) array
-        smplx_params = np.vstack(all_params)
-        
-        # Create dictionary compatible with SentenceToSMPLX/WordToSMPLX
-        pose_data = {
-            'smplx': smplx_params,
-            'fps': 15,
-            'gender': 'neutral' # Default
+        return {
+            "smplx": np.stack(frames, axis=0),
+            "fps": 15,
         }
-        
-        return pose_data
 
-def render_pose_folder(folder_name, poses_root="poses", output_path=None, gender='neutral'):
-    """Helper to assemble and render a folder from the 'poses' directory."""
+
+def render_pose_folder(
+    folder_name: str,
+    poses_root: str,
+    output_path: str,
+    gender: str = "neutral",
+    model_path: str = "models",
+    max_frames: Optional[int] = None,
+) -> str:
+    """Assemble a pose folder and render it to an MP4 file."""
     assembler = PoseAssembler(poses_root)
-    pose_data = assembler.assemble_sequence(folder_name)
-    pose_data['gender'] = gender
-    
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(current_dir, "models")
-    
-    # Use SentenceToSMPLX for advanced rendering
-    renderer = SentenceToSMPLX(model_path=model_path, gender=gender)
-    
-    if output_path is None:
-        os.makedirs("output", exist_ok=True)
-        output_path = os.path.join("output", f"pose_{folder_name}.mp4")
-        
-    renderer.render_animation(pose_data, save_path=output_path)
-    print(f"[SUCCESS] Animation saved to {output_path}")
-    return output_path
+    pose_data = assembler.assemble_folder(folder_name)
 
-if __name__ == "__main__":
-    # Small CLI for standalone use
-    import sys
-    poses_dir = os.path.join(os.getcwd(), "poses")
-    assembler = PoseAssembler(poses_dir)
-    folders = assembler.list_folders()
-    
-    if not folders:
-        print(f"No pose folders found in {poses_dir}")
-        sys.exit(0)
-        
-    print("Available pose folders:")
-    for idx, f in enumerate(folders[:20]):
-        print(f"{idx}: {f}")
-    if len(folders) > 20: 
-        print(f"... and {len(folders)-20} more.")
-        
-    try:
-        choice = int(input("\nEnter folder index to render: "))
-        selected = folders[choice]
-        render_pose_folder(selected, poses_dir)
-    except Exception as e:
-        print(f"Error: {e}")
+    animator = SentenceToSMPLX(model_path=model_path, gender=gender, device="cpu")
+    animator.render_animation(
+        pose_data=pose_data,
+        save_path=output_path,
+        fps=int(pose_data.get("fps", 15)),
+        max_frames=max_frames,
+    )
+    return output_path

@@ -15,14 +15,16 @@ output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 st.sidebar.header("⚙️ Settings")
 max_sentences = st.sidebar.slider("Max sentences to translate", 1, 20, 5)
 top_k = st.sidebar.slider("Number of matches to consider", 1, 10, 5)
+use_vae = st.sidebar.checkbox("Use VAE Blending (Experimental)", value=False, help="Blends top-k matches in VAE latent space for smoother, novel motions.")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### 💡 How it works
 1. Extracts transcript from YouTube
 2. Finds semantically similar sentences
-3. Uses phrase chunking as fallback
-4. Renders 3D animation with SMPL-X
+3. **VAE Blending**: Interpolates matches for novel motion (if enabled)
+4. Uses phrase chunking as fallback
+5. Renders 3D animation with SMPL-X
 
 ### 📊 Confidence Levels
 - 🟢 **High** ≥ 0.85 - Excellent match
@@ -59,7 +61,8 @@ if translate_btn and youtube_url:
                 json={
                     "url": youtube_url,
                     "max_sentences": max_sentences,
-                    "top_k": top_k
+                    "top_k": top_k,
+                    "use_vae": use_vae
                 },
                 timeout=600  # 10 minutes for first request
             )

@@ -1,0 +1,22 @@
+{
+  "pkl_dir": "how2sign_pkls_cropTrue_shapeFalse",
+  "out_dir": "checkpoints\\vae_h2s",
+  "seq_len": 300,
+  "pose_mode": "full182",
+  "root_relative": true,
+  "latent_dim": 64,
+  "hidden_dim": 256,
+  "epochs": 100,
+  "batch_size": 8,
+  "lr": 0.001,
+  "weight_decay": 1e-06,
+  "train_ratio": 0.95,
+  "seed": 42,
+  "num_workers": 4,
+  "grad_clip": 1.0,
+  "kl_max": 0.001,
+  "kl_warmup_epochs": 20,
+  "patience": 15,
+  "recompute_stats": false,
+  "stats_max_seqs": 2048
+}
