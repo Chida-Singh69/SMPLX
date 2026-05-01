@@ -12,7 +12,17 @@ from word_to_smplx import WordToSMPLX
 from sentence_to_smplx import SentenceToSMPLX
 from sentence_matcher import SentenceMatcher
 
+try:
+    from flask_cors import CORS
+    _cors_available = True
+except ImportError:
+    _cors_available = False
+    print("[WARN] flask-cors not installed. CORS headers will not be set.")
+    print("[WARN] Install with: pip install flask-cors")
+
 app = Flask(__name__, static_folder='static', template_folder='templates')
+if _cors_available:
+    CORS(app)
 
 # --- Setup paths and load resources once ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -106,9 +116,7 @@ def create_word_mapping(transcript_list, dataset_words):
 
 @app.route('/')
 def home():
-    if os.path.exists(os.path.join(app.template_folder, 'index.html')):
-        return send_from_directory(app.template_folder, 'index.html')
-    return "<h1>SMPL-X Animation API</h1><p>Frontend templates not found yet. Streamlit is at :8503</p>"
+    return jsonify({"status": "ok", "message": "SMPL-X ASL API running. Use the Vite frontend on port 5173."})
 
 @app.route('/api/available_words')
 def available_words():
@@ -692,9 +700,7 @@ def asl_from_youtube_sentences():
 def download_file(filename):
     return send_from_directory(output_dir, filename)
 
-@app.route('/')
-def home():
-    return "SMPLX ASL Backend is running. Use the /asl_from_youtube endpoint."
+# Note: Home route is defined above near line 107.
 
 if __name__ == '__main__':
     app.run(port=5000, debug=False, use_reloader=False)
