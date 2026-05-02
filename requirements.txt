@@ -12,4 +12,6 @@ sentence-transformers
 faiss-cpu
 spacy
 flask
-youtube-transcript-api 
+youtube-transcript-api
+tqdm
+git+https://github.com/openai/CLIP.git
