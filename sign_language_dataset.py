@@ -38,7 +38,7 @@ class CPU_Unpickler(pickle.Unpickler):
     """Handles torch tensors saved on GPU."""
     def find_class(self, module, name):
         if module == 'torch.storage' and name == '_load_from_bytes':
-            return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+            return lambda b: torch.load(io.BytesIO(b), map_location='cpu', weights_only=False)
         return super().find_class(module, name)
 
 

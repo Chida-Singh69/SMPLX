@@ -198,6 +198,100 @@ def translate_with_vae(text, gender='neutral', top_k=5, rerank=False):
     }
 
 
+def chunk_transcript_by_timestamps(transcript_list, max_gap=0.8, max_chunk_words=25):
+    """
+    Group YouTube transcript entries into chunks using timestamp gaps.
+    
+    Instead of splitting on punctuation (which YouTube captions rarely have),
+    this uses the natural pauses in speech to find sentence boundaries.
+    
+    Args:
+        transcript_list: Raw YouTube transcript (list of FetchedTranscriptSnippet)
+        max_gap: Seconds of silence that triggers a chunk boundary
+        max_chunk_words: Hard cap — force a split if chunk gets too long
+    
+    Returns:
+        List of dicts: [{text, start_time, end_time}, ...]
+    """
+    chunks = []
+    current_words = []
+    chunk_start = 0.0
+    prev_end = 0.0
+
+    for entry in transcript_list:
+        start = entry.start
+        duration = entry.duration
+        text = entry.text.strip()
+        
+        if not text:
+            continue
+
+        gap = start - prev_end
+        word_count = len(' '.join(current_words).split()) if current_words else 0
+
+        # Split on pause OR word limit
+        if current_words and (gap > max_gap or word_count >= max_chunk_words):
+            chunks.append({
+                'text': ' '.join(current_words),
+                'start_time': chunk_start,
+                'end_time': prev_end
+            })
+            current_words = []
+            chunk_start = start
+
+        if not current_words:
+            chunk_start = start
+
+        current_words.append(text)
+        prev_end = start + duration
+
+    # Flush remaining
+    if current_words:
+        chunks.append({
+            'text': ' '.join(current_words),
+            'start_time': chunk_start,
+            'end_time': prev_end
+        })
+
+    return chunks
+
+
+def blend_adjacent_chunks(pose_sequences, blend_frames=6):
+    """
+    Smooth transitions between chunk boundaries using linear interpolation.
+    
+    Instead of hard-cutting between adjacent pose arrays (which causes visible
+    jumps in the animation), this inserts short interpolated transitions.
+    
+    Args:
+        pose_sequences: List of [T_i, D] numpy arrays (D is typically 182)
+        blend_frames: Number of interpolation frames between chunks
+    
+    Returns:
+        Single [T_total, D] array with smooth transitions
+    """
+    if not pose_sequences:
+        return np.empty((0, 182))
+    if len(pose_sequences) == 1:
+        return pose_sequences[0]
+    
+    result = [pose_sequences[0]]
+    
+    for i in range(1, len(pose_sequences)):
+        end_pose = pose_sequences[i - 1][-1]   # Last frame of previous chunk
+        start_pose = pose_sequences[i][0]       # First frame of next chunk
+        
+        # Linear interpolation between boundary frames
+        transition = np.zeros((blend_frames, end_pose.shape[0]))
+        for f in range(blend_frames):
+            alpha = (f + 1) / (blend_frames + 1)
+            transition[f] = (1 - alpha) * end_pose + alpha * start_pose
+        
+        result.append(transition)
+        result.append(pose_sequences[i])
+    
+    return np.vstack(result)
+
 def _extract_smplx_params_array(pose_data):
     """Return a numpy array of shape [T, D] from pose_data loaded by SentenceToSMPLX/WordToSMPLX."""
     smplx_params = pose_data.get('smplx')
@@ -923,11 +1017,16 @@ def asl_from_youtube_sentences():
     # Extract full transcript
     full_transcript = extract_full_transcript_text(transcript_list)
     
-    # Split transcript into sentences (simple approach)
-    # TODO: Could use more sophisticated sentence splitting
-    import re
-    sentences = re.split(r'[.!?]+', full_transcript)
-    sentences = [s.strip() for s in sentences if s.strip()]
+    # Split transcript into sentences using timestamp-aware chunking
+    transcript_chunks = chunk_transcript_by_timestamps(transcript_list)
+    sentences = [c['text'] for c in transcript_chunks]
+    
+    # Fallback: if timestamp chunking produced nothing (e.g. no timing data),
+    # fall back to simple punctuation splitting
+    if not sentences:
+        import re
+        sentences = re.split(r'[.!?]+', full_transcript)
+        sentences = [s.strip() for s in sentences if s.strip()]
     
     # Limit number of sentences
     if len(sentences) > max_sentences:
@@ -1092,9 +1191,9 @@ def asl_from_youtube_sentences():
             'translation_results': translation_results
         }), 400
     
-    # Concatenate all pose sequences
-    print(f"\n[INFO] Concatenating {len(pose_sequences)} pose sequences...")
-    all_params = np.vstack(pose_sequences)
+    # Concatenate all pose sequences with smooth transitions between chunks
+    print(f"\n[INFO] Blending {len(pose_sequences)} pose sequences with transitions...")
+    all_params = blend_adjacent_chunks(pose_sequences, blend_frames=6)
     print(f"[INFO] Total frames: {all_params.shape[0]}")
 
     # Build frame-aligned subtitle timeline from successful sentence matches.

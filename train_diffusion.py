@@ -27,6 +27,9 @@ import numpy as np
 from pathlib import Path
 
 import torch
+# A100 Optimization: Enable TensorFloat32 (TF32) for massive speedups on Ampere architecture
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -98,27 +101,78 @@ class TimestepEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Motion Diffusion Transformer
+# Anatomically Informed GNN & LSTM Modules
 # ---------------------------------------------------------------------------
+
+class AnatomicalGNN(nn.Module):
+    """Message passing neural network for skeletal joints."""
+    def __init__(self, num_joints=55, in_dim=3, hidden_dim=32, out_dim=256, layers=4):
+        super().__init__()
+        self.num_joints = num_joints
+        self.joint_proj = nn.Linear(in_dim, hidden_dim)
+        
+        # Pose embedding to break permutation equivariance
+        self.pose_emb = nn.Parameter(torch.randn(1, num_joints, hidden_dim) * 0.02)
+        
+        # Learnable adjacency matrices to implicitly learn the kinematic tree
+        self.adjs = nn.ParameterList([
+            nn.Parameter(torch.eye(num_joints) + torch.randn(num_joints, num_joints) * 0.01) 
+            for _ in range(layers)
+        ])
+        
+        self.mlps = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim * 2),
+                nn.GELU(),
+                nn.Linear(hidden_dim * 2, hidden_dim)
+            ) for _ in range(layers)
+        ])
+        
+        self.out_proj = nn.Linear(num_joints * hidden_dim, out_dim)
+
+    def forward(self, x):
+        # x: [B*T, num_joints, in_dim]
+        h = self.joint_proj(x)
+        h = h + self.pose_emb
+        
+        for adj, mlp in zip(self.adjs, self.mlps):
+            # Graph message passing
+            h_msg = torch.matmul(adj, h)
+            h = h + mlp(h_msg)
+            
+        h = h.view(h.shape[0], -1)  # Flatten joints
+        return self.out_proj(h)
+
+
+class ExpressionEncoder(nn.Module):
+    """MLP encoder for facial expressions and non-joint parameters."""
+    def __init__(self, in_dim=17, hidden_dim=128, out_dim=256):
+        super().__init__()
+        # Expression token to break permutation equivariance
+        self.exp_emb = nn.Parameter(torch.randn(1, in_dim) * 0.02)
+        
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, out_dim)
+        )
+
+    def forward(self, x):
+        # x: [B*T, in_dim]
+        return self.mlp(x + self.exp_emb)
+
 
 class SignDiffusionModel(nn.Module):
     """
-    Transformer-based denoising network for SMPL-X motion generation.
-    
-    Predicts noise epsilon given:
-        - noisy motion x_t: [B, T, D]
-        - timestep t: [B]
-        - text embedding c: [B, text_dim]
+    GNN + LSTM based denoising network for SMPL-X motion generation.
+    Matches the 'Neural Sign Actors' architecture.
     """
-
     def __init__(
         self,
         pose_dim: int = 182,
         latent_dim: int = 512,
-        num_layers: int = 8,
-        num_heads: int = 8,
-        ff_mult: int = 4,
-        dropout: float = 0.1,
+        num_layers: int = 4,  # LSTM layers
+        num_heads: int = 8,   # Unused now, kept for config compatibility
         max_frames: int = 300,
         text_dim: int = 512,
     ):
@@ -126,38 +180,46 @@ class SignDiffusionModel(nn.Module):
         self.pose_dim = pose_dim
         self.latent_dim = latent_dim
         self.max_frames = max_frames
+        
+        # We assume first 165 dims are 55 joints (55 * 3), remaining 17 are expressions/shape/trans
+        self.num_joints = 55
+        self.joint_dim = 3
+        self.exp_dim = pose_dim - (self.num_joints * self.joint_dim)
 
-        # Input projection
-        self.input_proj = nn.Linear(pose_dim, latent_dim)
+        # Encoders
+        self.gnn_encoder = AnatomicalGNN(
+            num_joints=self.num_joints, 
+            in_dim=self.joint_dim, 
+            hidden_dim=32, 
+            out_dim=latent_dim // 2, 
+            layers=4
+        )
+        self.exp_encoder = ExpressionEncoder(
+            in_dim=self.exp_dim, 
+            hidden_dim=128, 
+            out_dim=latent_dim // 2
+        )
 
-        # Positional encoding (learnable)
-        self.pos_embed = nn.Parameter(torch.randn(1, max_frames, latent_dim) * 0.02)
-
-        # Timestep embedding
+        # Timestep & Text embeddings
         self.time_embed = TimestepEmbedding(latent_dim)
-
-        # Text conditioning projection
         self.text_proj = nn.Sequential(
             nn.Linear(text_dim, latent_dim),
             nn.SiLU(),
             nn.Linear(latent_dim, latent_dim),
         )
 
-        # Transformer encoder layers
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=latent_dim,
-            nhead=num_heads,
-            dim_feedforward=latent_dim * ff_mult,
-            dropout=dropout,
-            activation='gelu',
-            batch_first=True,
-            norm_first=True,
+        # Auto-regressive LSTM Decoder
+        self.lstm = nn.LSTM(
+            input_size=latent_dim, 
+            hidden_size=latent_dim, 
+            num_layers=num_layers, 
+            batch_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Output projection
         self.output_proj = nn.Sequential(
-            nn.LayerNorm(latent_dim),
+            nn.Linear(latent_dim, latent_dim),
+            nn.GELU(),
             nn.Linear(latent_dim, pose_dim),
         )
 
@@ -177,31 +239,28 @@ class SignDiffusionModel(nn.Module):
     ) -> torch.Tensor:
         B, T, D = x_t.shape
 
-        # Project input
-        h = self.input_proj(x_t)  # [B, T, latent]
+        # Split features into joints and expressions
+        joints = x_t[:, :, :self.num_joints*self.joint_dim].contiguous().view(B * T, self.num_joints, self.joint_dim)
+        expr = x_t[:, :, self.num_joints*self.joint_dim:].contiguous().view(B * T, self.exp_dim)
 
-        # Add positional encoding
-        h = h + self.pos_embed[:, :T, :]
+        # Encode
+        h_joints = self.gnn_encoder(joints)  # [B*T, latent/2]
+        h_expr = self.exp_encoder(expr)      # [B*T, latent/2]
 
-        # Add timestep embedding (broadcast across time)
-        t_emb = self.time_embed(t)  # [B, latent]
-        h = h + t_emb.unsqueeze(1)
+        # Combine
+        h = torch.cat([h_joints, h_expr], dim=-1)  # [B*T, latent]
+        h = h.view(B, T, -1)                       # [B, T, latent]
 
-        # Add text conditioning (broadcast across time)
-        c = self.text_proj(text_emb)  # [B, latent]
-        h = h + c.unsqueeze(1)
+        # Add timestep and text conditioning (broadcast across time)
+        t_emb = self.time_embed(t)      # [B, latent]
+        c = self.text_proj(text_emb)    # [B, latent]
+        h = h + t_emb.unsqueeze(1) + c.unsqueeze(1)
 
-        # Create attention mask for padding
-        src_key_padding_mask = None
-        if mask is not None:
-            src_key_padding_mask = ~mask  # TransformerEncoder expects True=ignore
+        # LSTM Auto-regressive decoding
+        out, _ = self.lstm(h)  # [B, T, latent]
 
-        # Transformer
-        h = self.transformer(h, src_key_padding_mask=src_key_padding_mask)
-
-        # Output
-        out = self.output_proj(h)  # [B, T, D]
-        return out
+        # Project back to SMPL-X pose space
+        return self.output_proj(out)
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +427,12 @@ def train(args):
             loss = F.mse_loss(pred_noise * mask.unsqueeze(-1),
                               noise * mask.unsqueeze(-1))
 
-            # Weighted loss for hands (dims 66-156) - 2x weight
+            # Weighted loss for hands (dims 66-156) - 2x weight total
             hand_loss = F.mse_loss(
                 pred_noise[:, :, 66:156] * mask.unsqueeze(-1),
                 noise[:, :, 66:156] * mask.unsqueeze(-1),
             )
-            total_loss = loss + 0.5 * hand_loss
+            total_loss = loss + 1.0 * hand_loss
 
             optimizer.zero_grad()
             total_loss.backward()

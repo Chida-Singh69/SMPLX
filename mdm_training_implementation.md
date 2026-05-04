@@ -35,12 +35,12 @@ python train_diffusion.py train --pkl_dir YOUR_30K_DIR_NAME --mapping YOUR_MAPPI
 When the training launches, you should see:
 1. **Device Assignment:** `[Train] Device: cuda:0` (confirming it is using the A100).
 2. **Text Embeddings:** The system will initialize OpenAI's CLIP encoder to convert the 30K English transcripts into mathematical embeddings.
-3. **Loss Tracking:** It will print the loss every epoch. The loss should steadily decrease. The architecture is using our custom **Hand-Weighted Loss Function**, meaning it is calculating `body_loss + 1.5 * hand_loss` to ensure razor-sharp finger spelling.
+3. **Loss Tracking:** It will print the loss every epoch. The loss should steadily decrease. The architecture is using our custom **Hand-Weighted Loss Function**, meaning it is calculating `body_loss + 2.0 * hand_loss` to ensure razor-sharp finger spelling. Additionally, it utilizes the state-of-the-art **Anatomically Informed GNN and LSTM Decoder** to ensure maximum structural accuracy.
 
 ## 4. Checkpoints & Resuming
 The script automatically saves checkpoints to the `checkpoints/` directory.
-- Every 50 epochs, it saves a numbered backup (e.g., `mdm_epoch_50.pt`).
-- It continuously overrides `mdm_best.pt` whenever the model achieves a historically low loss score.
+- Every 10 epochs, it saves a numbered backup (e.g., `model_epoch0050.pt`).
+- It continuously overrides `best_model.pt` whenever the model achieves a historically low validation loss score.
 
 If your A100 cluster drops the connection or time-limits your compute job, you can instantly resume training from the exact epoch it failed by pointing it to the checkpoint file.
 
@@ -49,6 +49,6 @@ When you are satisfied with the loss metric (after roughly 300 to 500 epochs), y
 
 Execute this command:
 ```bash
-python train_diffusion.py generate --checkpoint checkpoints/mdm_best.pt --text "I am driving to the hospital" --output_pkl new_asl_sequence.pkl
+python train_diffusion.py generate --model_dir checkpoints/sign_mdm_v1 --text "I am driving to the hospital"
 ```
-The output `.pkl` file will contain a perfectly synthesized `[N, 182]` SMPL-X sequence that you can route directly to your 3D avatar.
+The output `.npz` and `.pkl` files will be saved in the `generated/` folder, which you can route directly to your 3D avatar using `render_preview_video.py`.
