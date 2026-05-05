@@ -1,156 +1,571 @@
-import { useState } from 'react';
-import { cn } from '@/lib/utils';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { YoutubeTab } from './components/YoutubeTab';
 import { WordsTab } from './components/WordsTab';
 import { SentencesTab } from './components/SentencesTab';
 import { PosesTab } from './components/PosesTab';
 
-// ── Palette ──────────────────────────────────────
-// #FAEFE9  Baby Blossom   → page bg, active nav bg
-// #E2D5C2  Onion White    → card borders, subtle bg
-// #7A5063  Grey Carmine   → secondary text, Add btn
-// #F4A384  Creamy Peach   → badges, accents, highlights
-// #4A2C3F  Obsidian Plum  → sidebar, primary btn, headings
-// #486D83  Blue Loneliness→ info tags, download links
-// ─────────────────────────────────────────────────
-
-type Tab = 'youtube' | 'word' | 'sentences' | 'poses';
 export type Gender = 'neutral' | 'male' | 'female';
+type Tab = 'home' | 'sentences' | 'words' | 'about' | 'user';
 
-const NAV_ITEMS: { id: Tab; label: string; icon: string; badge?: string }[] = [
-  { id: 'youtube',   label: 'YouTube → ASL', icon: '▶', badge: 'LIVE' },
-  { id: 'word',      label: 'Word Mode',      icon: '✦' },
-  { id: 'sentences', label: 'Sentences',       icon: '❝' },
-  { id: 'poses',     label: 'Poses',           icon: '◈' },
+const NAV = [
+  { id: 'home' as Tab, icon: '▶', label: 'Video' },
+  { id: 'sentences' as Tab, icon: '❝', label: 'Sentences' },
+  { id: 'words' as Tab, icon: '✦', label: 'Words' },
+  { id: 'about' as Tab, icon: 'ℹ', label: 'About' },
+  { id: 'user' as Tab, icon: '◎', label: 'Profile' },
 ];
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('youtube');
-  const [gender, setGender] = useState<Gender>('neutral');
+/* ═══ Particle Network Canvas — migam.ai style plexus ═══ */
+function ParticleCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const ctx = c.getContext('2d'); if (!ctx) return;
+    let raf: number, w: number, h: number;
+
+    const mouse = { x: -9999, y: -9999 };
+    const MOUSE_RADIUS = 200;      // attraction zone around cursor
+    const MOUSE_STRENGTH = 0.02;   // how strongly particles are pulled
+    const N = 100;                  // particle count
+    const DIST = 200;              // max connection distance
+    const BASE_SPEED = 0.3;        // base drift speed
+    const pts: { x: number; y: number; vx: number; vy: number; ox: number; oy: number }[] = [];
+
+    const resize = () => { w = c.width = window.innerWidth; h = c.height = window.innerHeight; };
+    resize(); window.addEventListener('resize', resize);
+
+    const onMouse = (e: MouseEvent) => { mouse.x = e.clientX; mouse.y = e.clientY; };
+    const onLeave = () => { mouse.x = -9999; mouse.y = -9999; };
+    window.addEventListener('mousemove', onMouse);
+    window.addEventListener('mouseleave', onLeave);
+
+    for (let i = 0; i < N; i++) {
+      const x = Math.random() * w, y = Math.random() * h;
+      pts.push({
+        x, y, ox: x, oy: y,
+        vx: (Math.random() - 0.5) * BASE_SPEED,
+        vy: (Math.random() - 0.5) * BASE_SPEED,
+      });
+    }
+
+    const draw = () => {
+      ctx.clearRect(0, 0, w, h);
+
+      for (const p of pts) {
+        // Mouse attraction
+        const mdx = mouse.x - p.x, mdy = mouse.y - p.y;
+        const md = Math.sqrt(mdx * mdx + mdy * mdy);
+        if (md < MOUSE_RADIUS && md > 1) {
+          const force = (1 - md / MOUSE_RADIUS) * MOUSE_STRENGTH;
+          p.vx += (mdx / md) * force;
+          p.vy += (mdy / md) * force;
+        }
+
+        // Apply velocity with friction
+        p.vx *= 0.98; p.vy *= 0.98;
+        p.x += p.vx; p.y += p.vy;
+
+        // Gentle drift — keep particles moving even without mouse
+        p.vx += (Math.random() - 0.5) * 0.01;
+        p.vy += (Math.random() - 0.5) * 0.01;
+
+        // Bounce off edges
+        if (p.x < 0) { p.x = 0; p.vx *= -0.5; }
+        if (p.x > w) { p.x = w; p.vx *= -0.5; }
+        if (p.y < 0) { p.y = 0; p.vy *= -0.5; }
+        if (p.y > h) { p.y = h; p.vy *= -0.5; }
+
+        // Dot brightness increases near mouse
+        const brightness = md < MOUSE_RADIUS ? 0.5 + 0.5 * (1 - md / MOUSE_RADIUS) : 0.35;
+        const dotSize = md < MOUSE_RADIUS ? 1.8 + 1.2 * (1 - md / MOUSE_RADIUS) : 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, dotSize, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,212,170,${brightness})`; ctx.fill();
+      }
+
+      // Draw connections
+      for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+        const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < DIST) {
+          // Lines near mouse are brighter
+          const mx = (pts[i].x + pts[j].x) / 2, my = (pts[i].y + pts[j].y) / 2;
+          const mDist = Math.sqrt((mouse.x - mx) ** 2 + (mouse.y - my) ** 2);
+          const mouseBoost = mDist < MOUSE_RADIUS ? 0.18 * (1 - mDist / MOUSE_RADIUS) : 0;
+          const alpha = (0.06 + mouseBoost) * (1 - d / DIST);
+
+          ctx.beginPath(); ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[j].x, pts[j].y);
+          ctx.strokeStyle = `rgba(0,212,170,${alpha})`; ctx.lineWidth = 0.6; ctx.stroke();
+        }
+      }
+
+      // Draw lines from mouse to nearby particles
+      if (mouse.x > 0 && mouse.y > 0) {
+        for (const p of pts) {
+          const dx = mouse.x - p.x, dy = mouse.y - p.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < MOUSE_RADIUS * 0.8) {
+            const alpha = 0.15 * (1 - d / (MOUSE_RADIUS * 0.8));
+            ctx.beginPath(); ctx.moveTo(mouse.x, mouse.y); ctx.lineTo(p.x, p.y);
+            ctx.strokeStyle = `rgba(0,212,170,${alpha})`; ctx.lineWidth = 0.5; ctx.stroke();
+          }
+        }
+      }
+
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('mouseleave', onLeave);
+    };
+  }, []);
+  return <canvas ref={ref} id="particle-canvas" />;
+}
+
+/* ═══ Loading Screen ═══ */
+function LoadingScreen({ onDone }: { onDone: () => void }) {
+  const [fade, setFade] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFade(true), 2200);
+    const t2 = setTimeout(onDone, 3000);
+    return () => { clearTimeout(t); clearTimeout(t2); };
+  }, [onDone]);
 
   return (
-    <div className="flex min-h-screen" style={{ fontFamily: '"Instrument Serif", serif', background: '#FAEFE9' }}>
+    <div className={`loading-screen ${fade ? 'fade-out' : ''}`}>
+      <div className="loading-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 16,
+          background: 'linear-gradient(135deg, #00d4aa, #00b894)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22, fontWeight: 800, color: '#050505',
+          fontFamily: "'Plus Jakarta Sans', sans-serif",
+        }}>S</div>
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.90)', margin: '0 0 4px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>SMPL-X</p>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>ASL Translation</p>
+        </div>
+      </div>
+      <div className="loading-bar-track"><div className="loading-bar-fill" /></div>
+    </div>
+  );
+}
 
-      {/* ── Sidebar ── */}
-      <aside className="w-64 flex-shrink-0 flex flex-col" style={{ background: '#4A2C3F' }}>
-        {/* Logo */}
-        <div className="px-6 py-7 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold" style={{ background: '#F4A384', color: '#4A2C3F' }}>
-              S
-            </div>
-            <div>
-              <p className="font-bold text-white text-sm tracking-wide">SMPL-X</p>
-              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>ASL Animation Suite</p>
-            </div>
-          </div>
+/* ═══ Scroll Observer Hook ═══ */
+function useScrollReveal() {
+  const observe = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } }, { threshold: 0.15 });
+    el.querySelectorAll('.animate-on-scroll').forEach(c => obs.observe(c));
+    return () => obs.disconnect();
+  }, []);
+  return observe;
+}
+
+/* ═══ MAIN APP ═══ */
+export default function App() {
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>('home');
+  const [gender, setGender] = useState<Gender>('neutral');
+  const scrollRef = useScrollReveal();
+
+  return (
+    <>
+      {loading && <LoadingScreen onDone={() => setLoading(false)} />}
+
+      <div style={{
+        display: 'flex', flexDirection: 'column', minHeight: '100vh',
+        fontFamily: "'Plus Jakarta Sans', sans-serif",
+        background: '#050505', color: 'rgba(255,255,255,0.92)',
+        opacity: loading ? 0 : 1,
+        transition: 'opacity 0.6s ease',
+      }}>
+
+        {/* Background layers */}
+        <ParticleCanvas />
+        <div className="gradient-mesh">
+          <div className="orb orb-1" />
+          <div className="orb orb-2" />
+          <div className="orb orb-3" />
+        </div>
+        <div className="grid-overlay" />
+        <div className="noise-overlay" />
+        <div className="vignette-overlay" />
+
+        {/* Floating geometric decorations */}
+        <div aria-hidden style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
+          <div className="anim-spin-slow" style={{ position: 'absolute', top: '8%', right: '6%', width: 200, height: 200, borderRadius: '50%', border: '1px solid rgba(0,212,170,0.08)' }} />
+          <div className="anim-spin-rev" style={{ position: 'absolute', top: 'calc(8% + 25px)', right: 'calc(6% + 25px)', width: 150, height: 150, borderRadius: '50%', border: '1px solid rgba(0,212,170,0.05)' }} />
+          <div className="anim-drift-x" style={{ position: 'absolute', bottom: '15%', left: '3%', width: 28, height: 28, border: '1px solid rgba(0,212,170,0.12)', transform: 'rotate(45deg)' }} />
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-5 space-y-1">
-          <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            Modes
-          </p>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-left transition-all duration-200',
-                activeTab === item.id ? '' : 'text-white/50 hover:text-white hover:bg-white/5'
-              )}
-              style={activeTab === item.id ? { background: '#FAEFE9', color: '#4A2C3F' } : {}}
-            >
-              <span className="text-base w-5 text-center">{item.icon}</span>
-              <span className="flex-1">{item.label}</span>
-              {item.badge && (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: '#F4A384', color: '#4A2C3F' }}>
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
+        {/* ── Header ── */}
+        <header style={{
+          position: 'sticky', top: 0, zIndex: 20,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 32px',
+          background: 'rgba(5,5,5,0.75)', backdropFilter: 'blur(20px)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+              background: 'linear-gradient(135deg, #00d4aa, #00b894)',
+              color: '#050505', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 800, fontSize: 14,
+            }}>S</div>
+            <div>
+              <p style={{ fontWeight: 700, fontSize: 13.5, color: 'rgba(255,255,255,0.92)', margin: 0 }}>SMPL-X</p>
+              <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.35)', margin: 0 }}>ASL Animation Suite</p>
+            </div>
+          </div>
 
-        {/* Gender selector */}
-        <div className="px-5 py-5 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            Avatar Gender
-          </p>
-          <div className="flex gap-1.5">
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginRight: 4 }}>Avatar:</span>
             {(['neutral', 'male', 'female'] as Gender[]).map(g => (
-              <button
-                key={g}
-                onClick={() => setGender(g)}
-                className="flex-1 py-1.5 rounded-lg text-xs font-medium capitalize transition-all"
-                style={gender === g
-                  ? { background: '#F4A384', color: '#4A2C3F' }
-                  : { background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }
-                }
-              >
-                {g}
-              </button>
+              <button key={g} onClick={() => setGender(g)} style={{
+                padding: '4px 13px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                border: 'none', cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.18s',
+                background: gender === g ? 'linear-gradient(135deg, #00d4aa, #00b894)' : 'rgba(255,255,255,0.04)',
+                color: gender === g ? '#050505' : 'rgba(255,255,255,0.50)',
+              }}>{g}</button>
+            ))}
+          </div>
+
+          <span style={{
+            fontSize: 11, padding: '4px 13px', borderRadius: 20, fontWeight: 600,
+            background: 'rgba(0,212,170,0.08)', color: '#00d4aa',
+            border: '1px solid rgba(0,212,170,0.15)',
+          }}>How2Sign Dataset</span>
+        </header>
+
+        {/* ── Content ── */}
+        <main ref={scrollRef} style={{ flex: 1, position: 'relative', zIndex: 1, padding: '24px 20px 110px' }}>
+          {tab === 'home' && <YoutubeTab gender={gender} />}
+          {tab === 'sentences' && <SentencesTab gender={gender} />}
+          {tab === 'words' && <WordsTab gender={gender} />}
+          {tab === 'about' && <AboutSection />}
+          {tab === 'user' && <UserSection />}
+        </main>
+
+        {/* ── Bottom Nav ── */}
+        <nav style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
+          display: 'flex', justifyContent: 'center', padding: '10px 0 14px',
+          background: 'rgba(5,5,5,0.85)', backdropFilter: 'blur(20px)',
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          <div style={{
+            display: 'flex', gap: 3, padding: '5px 7px', borderRadius: 30,
+            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+            boxShadow: '0 4px 30px rgba(0,0,0,0.5)',
+          }}>
+            {NAV.map(n => {
+              const active = tab === n.id;
+              return (
+                <button key={n.id} onClick={() => setTab(n.id)}
+                  className={!active ? 'nav-tooltip' : ''} data-tooltip={n.label}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: active ? 7 : 0,
+                    padding: active ? '8px 20px' : '8px 15px',
+                    borderRadius: 24, border: 'none', cursor: 'pointer',
+                    background: active ? 'linear-gradient(135deg, #00d4aa, #00b894)' : 'transparent',
+                    color: active ? '#050505' : 'rgba(255,255,255,0.40)',
+                    fontWeight: 600, fontSize: 13,
+                    transition: 'all 0.22s cubic-bezier(.4,0,.2,1)',
+                    whiteSpace: 'nowrap', position: 'relative',
+                    fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  }}>
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>{n.icon}</span>
+                  {active && <span style={{ fontSize: 12.5 }}>{n.label}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
+    </>
+  );
+}
+
+/* ═══ ABOUT SECTION — migam.ai/product inspired ═══ */
+function AboutSection() {
+  const sectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sectionRef.current; if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
+    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+    el.querySelectorAll('.animate-on-scroll').forEach(c => obs.observe(c));
+    return () => obs.disconnect();
+  }, []);
+
+  const card: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '1.25rem', padding: '32px',
+    transition: 'all 0.35s cubic-bezier(0.4,0,0.2,1)',
+  };
+
+  const FEATURES = [
+    { icon: '▶', title: 'YouTube → ASL', desc: 'Paste any YouTube URL. We extract the transcript and convert it into sign language animations automatically.' },
+    { icon: '❝', title: 'Sentence Translation', desc: 'Pick from 10,000+ pre-mapped sentences in the How2Sign dataset for instant, accurate ASL rendering.' },
+    { icon: '✦', title: 'Word Composition', desc: 'Build custom sign sequences word-by-word. Queue multiple words and generate a combined animation.' },
+    { icon: '◈', title: 'Pose Assembly', desc: 'Load raw SMPL-X pose parameters from pickle files and assemble them into smooth MP4 animations.' },
+    { icon: '⚡', title: 'Real-time Rendering', desc: 'GPU-accelerated SMPL-X body model rendering with studio lighting, skin textures, and hair.' },
+    { icon: '⬇', title: 'Export & Download', desc: 'Every animation is rendered as a high-quality MP4 video, ready to download and share instantly.' },
+  ];
+
+  const STEPS = [
+    { n: '01', title: 'Input', desc: 'Paste a YouTube URL, select a sentence from the dataset, or compose words manually.', accent: '#00d4aa' },
+    { n: '02', title: 'AI Processing', desc: 'Transcript extraction, semantic matching with SentenceTransformers, and ASL gloss lookup from How2Sign.', accent: '#00e5b8' },
+    { n: '03', title: 'Pose Generation', desc: 'Matched glosses are mapped to SMPL-X body parameters — 55 joints, 10 finger joints per hand.', accent: '#00f5c8' },
+    { n: '04', title: 'Render & Export', desc: 'Frames are rendered with studio lighting and realistic skin, then encoded into a downloadable MP4.', accent: '#33ffd6' },
+  ];
+
+  return (
+    <div ref={sectionRef} style={{ maxWidth: 1100, margin: '0 auto' }}>
+
+      {/* ═══ HERO — centered, large ═══ */}
+      <div className="animate-on-scroll" style={{ textAlign: 'center', padding: '60px 0 80px', position: 'relative' }}>
+        {/* glow orbs */}
+        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -80, left: '50%', transform: 'translateX(-50%)', width: 500, height: 300, borderRadius: '50%', background: 'rgba(0,212,170,0.06)', filter: 'blur(100px)', pointerEvents: 'none' }} />
+
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <span style={{
+            display: 'inline-block', fontSize: 11, letterSpacing: '0.25em', color: '#00d4aa',
+            textTransform: 'uppercase', fontWeight: 700, marginBottom: 24,
+            padding: '6px 16px', borderRadius: 20,
+            background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.15)',
+          }}>Product Overview</span>
+
+          <h1 style={{
+            fontSize: 'clamp(36px, 5vw, 64px)', fontWeight: 700,
+            color: 'rgba(255,255,255,0.95)', margin: '0 0 24px',
+            letterSpacing: '-2px', lineHeight: 1.1,
+          }}>
+            English to ASL,<br />
+            <span style={{ background: 'linear-gradient(135deg, #00d4aa, #00f5c8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Powered by AI</span>
+          </h1>
+
+          <p style={{
+            fontSize: 17, color: 'rgba(255,255,255,0.45)', margin: '0 auto',
+            maxWidth: 560, lineHeight: 1.7, fontWeight: 400,
+          }}>
+            Transform spoken English into photorealistic 3D sign language animations using SMPL-X body models and the How2Sign dataset — directly in your browser.
+          </p>
+        </div>
+      </div>
+
+      {/* ═══ FEATURE BENTO GRID ═══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 96 }}>
+        {FEATURES.map((f, i) => (
+          <div key={f.title} className="animate-on-scroll dark-card" style={{
+            ...card, cursor: 'default',
+            transitionDelay: `${i * 0.07}s`,
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12, marginBottom: 20,
+              background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, color: '#00d4aa',
+            }}>{f.icon}</div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.92)', margin: '0 0 10px' }}>{f.title}</h3>
+            <p style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.40)', margin: 0, lineHeight: 1.7 }}>{f.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ═══ HOW IT WORKS — PIPELINE ═══ */}
+      <div style={{ marginBottom: 96 }}>
+        <div className="animate-on-scroll" style={{ textAlign: 'center', marginBottom: 56 }}>
+          <span style={{
+            display: 'inline-block', fontSize: 11, letterSpacing: '0.25em', color: '#00d4aa',
+            textTransform: 'uppercase', fontWeight: 700, marginBottom: 20,
+            padding: '6px 16px', borderRadius: 20,
+            background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.15)',
+          }}>How It Works</span>
+          <h2 style={{ fontSize: 'clamp(28px, 3.5vw, 42px)', fontWeight: 700, color: 'rgba(255,255,255,0.92)', margin: 0, letterSpacing: '-1px' }}>
+            From text to sign in four steps
+          </h2>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0, position: 'relative' }}>
+          {/* connector line */}
+          <div style={{ position: 'absolute', top: 28, left: '12.5%', right: '12.5%', height: 2, background: 'linear-gradient(90deg, rgba(0,212,170,0.15), rgba(0,212,170,0.30), rgba(0,212,170,0.15))', zIndex: 0 }} />
+
+          {STEPS.map((s, i) => (
+            <div key={s.n} className="animate-on-scroll" style={{ textAlign: 'center', position: 'relative', zIndex: 1, padding: '0 16px', transitionDelay: `${i * 0.12}s` }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: '50%', margin: '0 auto 20px',
+                background: '#0a0a0a', border: `2px solid ${s.accent}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, fontWeight: 800, color: s.accent,
+                boxShadow: `0 0 20px ${s.accent}22`,
+              }}>{s.n}</div>
+              <h4 style={{ fontSize: 15, fontWeight: 700, color: 'rgba(255,255,255,0.90)', margin: '0 0 8px' }}>{s.title}</h4>
+              <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.38)', margin: 0, lineHeight: 1.65 }}>{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══ STATS COUNTERS ═══ */}
+      <div className="animate-on-scroll" style={{
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 96,
+      }}>
+        {[
+          { value: '95%', label: 'Translation Accuracy' },
+          { value: '10,000+', label: 'Sentences in Dataset' },
+          { value: '3', label: 'Avatar Body Models' },
+          { value: '<5s', label: 'Avg. Render Time' },
+        ].map((s, i) => (
+          <div key={s.label} className="dark-card" style={{
+            ...card, textAlign: 'center', padding: '36px 20px',
+          }}>
+            <p style={{ fontSize: 36, fontWeight: 800, margin: '0 0 8px', letterSpacing: '-1.5px', background: 'linear-gradient(135deg, #00d4aa, #00f5c8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{s.value}</p>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 500 }}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ═══ TECH STACK ═══ */}
+      <div className="animate-on-scroll" style={{ marginBottom: 96 }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <span style={{
+            display: 'inline-block', fontSize: 11, letterSpacing: '0.25em', color: '#00d4aa',
+            textTransform: 'uppercase', fontWeight: 700, marginBottom: 20,
+            padding: '6px 16px', borderRadius: 20,
+            background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.15)',
+          }}>Tech Stack</span>
+          <h2 style={{ fontSize: 'clamp(24px, 3vw, 36px)', fontWeight: 700, color: 'rgba(255,255,255,0.92)', margin: 0, letterSpacing: '-0.5px' }}>
+            Built with industry-leading tools
+          </h2>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+          {[
+            { name: 'SMPL-X', cat: 'core' }, { name: 'PyTorch', cat: 'core' },
+            { name: 'How2Sign', cat: 'data' }, { name: 'Flask', cat: 'api' },
+            { name: 'React', cat: 'ui' }, { name: 'Vite', cat: 'ui' },
+            { name: 'OpenCV', cat: 'core' }, { name: 'SentenceTransformers', cat: 'ai' },
+            { name: 'YouTube API', cat: 'api' }, { name: 'Trimesh', cat: 'core' },
+            { name: 'Pyrender', cat: 'core' }, { name: 'NumPy', cat: 'core' },
+          ].map(t => (
+            <span key={t.name} style={{
+              fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 12,
+              background: t.cat === 'core' ? 'rgba(0,212,170,0.08)' : 'rgba(255,255,255,0.03)',
+              color: t.cat === 'core' ? '#00d4aa' : 'rgba(255,255,255,0.60)',
+              border: `1px solid ${t.cat === 'core' ? 'rgba(0,212,170,0.15)' : 'rgba(255,255,255,0.06)'}`,
+              transition: 'all 0.2s',
+              cursor: 'default',
+            }}>{t.name}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══ CTA BANNER ═══ */}
+      <div className="animate-on-scroll" style={{
+        borderRadius: '1.5rem', overflow: 'hidden', position: 'relative',
+        padding: '56px 48px', textAlign: 'center',
+        background: 'linear-gradient(145deg, #0a0f0d 0%, #0d1a16 50%, #050a08 100%)',
+        border: '1px solid rgba(0,212,170,0.12)',
+      }}>
+        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -60, right: -60, width: 300, height: 300, borderRadius: '50%', background: '#00d4aa', filter: 'blur(120px)', opacity: 0.07, pointerEvents: 'none' }} />
+        <div className="anim-float-slow" style={{ position: 'absolute', bottom: -40, left: -40, width: 250, height: 250, borderRadius: '50%', background: '#009688', filter: 'blur(100px)', opacity: 0.05, pointerEvents: 'none' }} />
+
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <h2 style={{ fontSize: 'clamp(24px, 3vw, 36px)', fontWeight: 700, color: 'rgba(255,255,255,0.92)', margin: '0 0 14px', letterSpacing: '-0.5px' }}>
+            Ready to translate?
+          </h2>
+          <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.40)', margin: '0 auto 28px', maxWidth: 440, lineHeight: 1.65 }}>
+            Switch to the Video tab to get started — paste a YouTube URL and watch your first ASL animation come to life.
+          </p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <span className="btn-primary" style={{ padding: '12px 32px', fontSize: 14, borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'default' }}>
+              ▶ Try It Now
+            </span>
+            <span className="btn-ghost" style={{ padding: '12px 24px', fontSize: 14, borderRadius: 12, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              View Documentation
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══ USER / PROFILE SECTION ═══ */
+function UserSection() {
+  const card: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '1.25rem', padding: '28px',
+    boxShadow: '0 2px 24px rgba(0,0,0,0.4)',
+  };
+  const stats = [
+    { label: 'Animations Generated', value: '24' },
+    { label: 'Words Translated', value: '312' },
+    { label: 'Videos Processed', value: '7' },
+    { label: 'Hours Saved', value: '~3h' },
+  ];
+  return (
+    <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 20 }}>
+        <div style={{
+          width: 70, height: 70, borderRadius: '50%', flexShrink: 0,
+          background: 'linear-gradient(135deg, #00d4aa, #00b894)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 28, fontWeight: 700, color: '#050505',
+        }}>B</div>
+        <div style={{ flex: 1 }}>
+          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'rgba(255,255,255,0.92)', margin: '0 0 4px' }}>Bhoomika</h2>
+          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)', margin: '0 0 10px' }}>bhoomika@smplx.dev · How2Sign Researcher</p>
+          <div style={{ display: 'flex', gap: 7 }}>
+            {['Researcher', 'ASL Enthusiast', 'How2Sign'].map(tag => (
+              <span key={tag} className="dark-tag" style={{ fontSize: 11, padding: '3px 11px', borderRadius: 20 }}>{tag}</span>
             ))}
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'rgba(255,255,255,0.40)' }}>
+          <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ade80' }} /> Online
+        </div>
+      </div>
 
-        {/* Footer */}
-        <div className="px-5 py-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#7A5063', color: 'white' }}>
-              {gender[0].toUpperCase()}
-            </div>
-            <div>
-              <p className="text-white text-xs font-medium capitalize">Avatar: {gender}</p>
-              <div className="flex items-center gap-1 mt-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)' }}>Model ready</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {stats.map(s => (
+          <div key={s.label} style={{ ...card, padding: '18px 14px', textAlign: 'center' }}>
+            <p style={{ fontSize: 26, fontWeight: 800, color: '#00d4aa', margin: '0 0 4px' }}>{s.value}</p>
+            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', margin: 0, lineHeight: 1.4 }}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div style={card}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: 'rgba(255,255,255,0.90)', marginBottom: 14 }}>Recent Activity</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {[
+            { action: 'Generated animation', detail: '"Hello World" · Word Mode', time: '2 min ago', dot: '#00d4aa' },
+            { action: 'Rendered sentence', detail: 'How2Sign #AS7382', time: '1 hr ago', dot: '#00b894' },
+            { action: 'YouTube video', detail: 'TED Talk – Sign Language', time: 'Yesterday', dot: '#009688' },
+          ].map((a, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: a.dot, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>{a.action}</span>
+                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}> — {a.detail}</span>
               </div>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.20)', whiteSpace: 'nowrap' }}>{a.time}</span>
             </div>
-          </div>
+          ))}
         </div>
-      </aside>
+      </div>
 
-      {/* ── Main ── */}
-      <div className="flex-1 flex flex-col overflow-hidden relative" style={{ background: '#FAEFE9' }}>
-
-        {/* Subtle background — 3 soft orbs only, no pattern */}
-        <div className="pointer-events-none absolute inset-0" aria-hidden="true" style={{ zIndex: 0 }}>
-          <div style={{ position: 'absolute', top: '-120px', left: '-100px',  width: '500px', height: '500px', borderRadius: '50%', background: '#F4A384', filter: 'blur(120px)', opacity: 0.28 }} />
-          <div style={{ position: 'absolute', bottom: '-100px', right: '-80px', width: '450px', height: '450px', borderRadius: '50%', background: '#486D83', filter: 'blur(130px)', opacity: 0.20 }} />
-          <div style={{ position: 'absolute', top: '35%', left: '40%',        width: '380px', height: '380px', borderRadius: '50%', background: '#7A5063', filter: 'blur(110px)', opacity: 0.15 }} />
-        </div>
-
-        {/* Top bar */}
-        <header className="flex items-center justify-between px-10 py-4 border-b bg-white/60 backdrop-blur-sm" style={{ borderColor: '#E2D5C2' }}>
-          <div>
-            <h1 className="text-lg font-bold" style={{ color: '#4A2C3F' }}>
-              {NAV_ITEMS.find(n => n.id === activeTab)?.label}
-            </h1>
-            <p className="text-xs mt-0.5" style={{ color: '#7A5063' }}>
-              {activeTab === 'youtube'   && 'Extract transcript and generate ASL animations from any YouTube video'}
-              {activeTab === 'word'      && 'Select individual words and compose multi-word ASL sequences'}
-              {activeTab === 'sentences' && 'Browse and render full ASL sentences from the How2Sign dataset'}
-              {activeTab === 'poses'     && 'Assemble frame-level pose folders into smooth animations'}
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs px-3 py-1.5 rounded-full font-medium" style={{ background: 'rgba(72,109,131,0.12)', color: '#486D83', border: '1px solid rgba(72,109,131,0.25)' }}>
-              How2Sign Dataset
-            </span>
-            <span className="text-xs px-3 py-1.5 rounded-full font-medium capitalize" style={{ background: 'rgba(244,163,132,0.15)', color: '#7A5063', border: '1px solid rgba(244,163,132,0.3)' }}>
-              Avatar: {gender}
-            </span>
-          </div>
-        </header>
-
-        {/* Content */}
-        <main className="flex-1 overflow-y-auto px-10 py-8" style={{ background: 'transparent', position: 'relative', zIndex: 1 }}>
-          {activeTab === 'youtube'   && <YoutubeTab gender={gender} />}
-          {activeTab === 'word'      && <WordsTab gender={gender} />}
-          {activeTab === 'sentences' && <SentencesTab gender={gender} />}
-          {activeTab === 'poses'     && <PosesTab gender={gender} />}
-        </main>
+      <div style={{ ...card, background: 'rgba(0,212,170,0.04)', borderColor: 'rgba(0,212,170,0.10)' }}>
+        <p style={{ fontSize: 12.5, color: 'rgba(0,212,170,0.60)', margin: 0, textAlign: 'center' }}>
+          ⚙️ Settings · Integrations · API Keys — <em>coming soon</em>
+        </p>
       </div>
     </div>
   );

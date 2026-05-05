@@ -11,6 +11,15 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
   const [transcriptData, setTranscriptData] = useState<any>(null);
   const [resultVideoUrl, setResultVideoUrl] = useState('');
 
+  // Extract YouTube video ID from URL
+  const getYoutubeId = (u: string) => {
+    try {
+      const match = u.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+      return match?.[1] ?? null;
+    } catch { return null; }
+  };
+  const youtubeId = getYoutubeId(url);
+
   const handleAnalyze = async () => {
     if (!url) return;
     setStatus('analyzing'); setError('');
@@ -37,95 +46,176 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
     } catch (e: any) { setError(e.message); setStatus('error'); }
   };
 
-  const card = { background: 'white', border: '1px solid #E2D5C2', borderRadius: '1rem' };
+  const card: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.03)',
+    border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '1.25rem',
+    boxShadow: '0 2px 24px rgba(0,0,0,0.4)',
+    transition: 'all 0.3s ease',
+  };
 
   return (
-    <div className="grid grid-cols-2 gap-8 h-full">
-      <div className="space-y-5">
-        <div className="p-6 shadow-sm" style={card}>
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#F4A384', color: '#4A2C3F' }}>1</div>
-            <h3 className="font-semibold text-sm" style={{ color: '#4A2C3F' }}>Paste a YouTube URL</h3>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+
+      {/* URL bar */}
+      <div style={{ ...card, padding: '20px 24px', display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+          background: 'linear-gradient(135deg, #00d4aa, #00b894)', color: '#050505',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 800,
+        }}>1</div>
+        <input
+          type="text"
+          placeholder="Paste a YouTube URL — e.g. https://youtube.com/watch?v=..."
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          disabled={status === 'analyzing' || status === 'generating'}
+          className="dark-input"
+          style={{ flex: 1, fontSize: 13.5, padding: '8px 16px' }}
+        />
+        <button
+          onClick={handleAnalyze}
+          disabled={!url || status === 'analyzing' || status === 'generating'}
+          className="btn-primary"
+          style={{ padding: '8px 22px', fontSize: 13, fontWeight: 600 }}
+        >
+          {status === 'analyzing' ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Extract'}
+        </button>
+        {errorMsg && <p style={{ color: '#ef4444', fontSize: 12, background: 'rgba(239,68,68,0.10)', borderRadius: 8, padding: '4px 10px', border: '1px solid rgba(239,68,68,0.20)' }}>{errorMsg}</p>}
+      </div>
+
+      {/* Two-panel: LEFT = YouTube player, RIGHT = ASL output */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+
+        {/* LEFT — YouTube player */}
+        <div style={{ ...card, minHeight: 420, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: 'rgba(255,255,255,0.90)' }}>YouTube Video</span>
+            {youtubeId && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(0,212,170,0.10)', color: '#00d4aa', fontWeight: 600, border: '1px solid rgba(0,212,170,0.15)' }}>● Live</span>}
           </div>
-          <div className="flex gap-3">
-            <input type="text" placeholder="https://youtube.com/watch?v=..." value={url}
-              onChange={e => setUrl(e.target.value)}
-              disabled={status === 'analyzing' || status === 'generating'}
-              className="flex-1 text-sm px-4 py-2.5 rounded-xl outline-none transition-all"
-              style={{ background: '#FAEFE9', border: '1px solid #E2D5C2', color: '#4A2C3F' }}
-            />
-            <Button onClick={handleAnalyze} disabled={!url || status === 'analyzing' || status === 'generating'}
-              className="text-white text-sm px-5 rounded-xl border-0" style={{ background: '#7A5063' }}>
-              {status === 'analyzing' ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Extract'}
-            </Button>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            {youtubeId ? (
+              <iframe
+                key={youtubeId}
+                src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1`}
+                title="YouTube video"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                style={{ width: '100%', aspectRatio: '16/9', border: 'none' }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <div style={{
+                  width: 72, height: 72, borderRadius: 18, margin: '0 auto 18px',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, color: 'rgba(255,255,255,0.15)',
+                }}>▶</div>
+                <p style={{ fontWeight: 700, fontSize: 14, color: 'rgba(255,255,255,0.80)', marginBottom: 6 }}>YouTube Player</p>
+                <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)', maxWidth: 220, margin: '0 auto', lineHeight: 1.65 }}>
+                  Paste a valid YouTube URL above — the video will embed here automatically.
+                </p>
+              </div>
+            )}
           </div>
-          {errorMsg && <p className="mt-3 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-2">{errorMsg}</p>}
         </div>
 
-        {transcriptData && (
-          <div className="p-6 shadow-sm" style={card}>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#F4A384', color: '#4A2C3F' }}>2</div>
-              <h3 className="font-semibold text-sm" style={{ color: '#4A2C3F' }}>Transcript Extracted</h3>
-              <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(72,109,131,0.12)', color: '#486D83' }}>
+        {/* RIGHT — ASL sign language output */}
+        <div style={{ ...card, minHeight: 420, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: 'rgba(255,255,255,0.90)' }}>Sign Language Translation</span>
+            {status === 'done' && (
+              <a href={resultVideoUrl} download="youtube_asl.mp4" style={{
+                fontSize: 11.5, padding: '4px 12px', borderRadius: 10, fontWeight: 600,
+                background: 'rgba(0,212,170,0.10)', color: '#00d4aa', textDecoration: 'none',
+                border: '1px solid rgba(0,212,170,0.15)',
+              }}>⬇ Download</a>
+            )}
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: status === 'done' ? '20px' : '40px', textAlign: 'center' }}>
+            {status === 'done' ? (
+              <video src={resultVideoUrl} controls autoPlay style={{ width: '100%', borderRadius: 12 }} />
+            ) : (
+              <>
+                <div style={{
+                  width: 72, height: 72, borderRadius: 18, marginBottom: 18,
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {status === 'generating'
+                    ? <Loader2 style={{ width: 32, height: 32, color: '#00d4aa' }} className="animate-spin" />
+                    : <Hand style={{ width: 32, height: 32, color: 'rgba(255,255,255,0.15)' }} />}
+                </div>
+                <p style={{ fontWeight: 700, fontSize: 14, color: 'rgba(255,255,255,0.80)', marginBottom: 6 }}>
+                  {status === 'generating' ? 'Rendering animation…' : 'Output Preview'}
+                </p>
+                <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)', maxWidth: 240, lineHeight: 1.65 }}>
+                  {status === 'generating'
+                    ? 'This may take a moment depending on video length.'
+                    : 'Your ASL animation will appear here after generation.'}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Step 2: transcript + generate */}
+      {transcriptData && (
+        <div style={{ ...card, padding: '22px 24px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: '50%', flexShrink: 0, marginTop: 2,
+            background: 'linear-gradient(135deg, #00d4aa, #00b894)', color: '#050505',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 12, fontWeight: 800,
+          }}>2</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <p style={{ fontWeight: 700, fontSize: 13.5, color: 'rgba(255,255,255,0.90)', margin: 0 }}>Transcript Extracted</p>
+              <span className="dark-tag" style={{ fontSize: 11 }}>
                 {transcriptData.sentences?.length || 0} sentences
               </span>
             </div>
-            <div className="max-h-40 overflow-y-auto space-y-1 mb-5">
-              {(transcriptData.sentences || []).slice(0, 8).map((s: string, i: number) => (
-                <div key={i} className="text-xs px-3 py-2 rounded-lg" style={{ background: '#FAEFE9', color: '#7A5063' }}>{s}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+              {(transcriptData.sentences || []).slice(0, 6).map((s: string, i: number) => (
+                <span key={i} style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.50)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  {s.length > 55 ? s.slice(0, 55) + '…' : s}
+                </span>
               ))}
-              {(transcriptData.sentences?.length || 0) > 8 && (
-                <p className="text-xs text-center py-1" style={{ color: '#7A5063' }}>+{transcriptData.sentences.length - 8} more…</p>
+              {(transcriptData.sentences?.length || 0) > 6 && (
+                <span style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.50)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  +{transcriptData.sentences.length - 6} more…
+                </span>
               )}
             </div>
-            <Button onClick={handleGenerate} disabled={status === 'generating'}
-              className="w-full text-white text-sm py-5 rounded-xl border-0" style={{ background: '#4A2C3F' }}>
-              {status === 'generating' ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Generating…</> : <><Play className="w-4 h-4 mr-2" />Generate ASL Animation</>}
-            </Button>
+            <button
+              onClick={handleGenerate}
+              disabled={status === 'generating'}
+              className="btn-primary"
+              style={{ padding: '10px 28px', fontSize: 13.5, display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              {status === 'generating'
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</>
+                : <><Play className="w-4 h-4" />Generate ASL Animation</>}
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {status === 'idle' && (
-          <div className="p-6 rounded-2xl" style={{ background: 'rgba(244,163,132,0.12)', border: '1px solid rgba(244,163,132,0.3)' }}>
-            <p className="font-semibold text-sm mb-4" style={{ color: '#4A2C3F' }}>How it works</p>
+      {/* How it works hint */}
+      {status === 'idle' && (
+        <div style={{ padding: '18px 22px', borderRadius: 16, background: 'rgba(0,212,170,0.04)', border: '1px solid rgba(0,212,170,0.10)' }}>
+          <p style={{ fontWeight: 700, fontSize: 13, color: 'rgba(255,255,255,0.85)', marginBottom: 10 }}>How it works</p>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             {['Extract speech transcript', 'Semantic sentence matching', 'SMPL-X pose generation', 'Render & export MP4'].map((s, i) => (
-              <div key={i} className="flex items-center gap-3 py-1.5">
-                <ChevronRight className="w-3.5 h-3.5 shrink-0" style={{ color: '#F4A384' }} />
-                <span className="text-xs" style={{ color: '#7A5063' }}>{s}</span>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <ChevronRight style={{ width: 14, height: 14, color: '#00d4aa', flexShrink: 0 }} />
+                <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.40)' }}>{s}</span>
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      <div className="shadow-sm flex flex-col overflow-hidden" style={{ ...card, minHeight: '420px' }}>
-        {status === 'done' ? (
-          <div className="flex flex-col h-full">
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: '#E2D5C2' }}>
-              <span className="text-sm font-semibold" style={{ color: '#4A2C3F' }}>Animation Output</span>
-              <a href={resultVideoUrl} download="youtube_asl.mp4" className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: 'rgba(72,109,131,0.12)', color: '#486D83' }}>⬇ Download</a>
-            </div>
-            <div className="flex-1 flex items-center justify-center p-6">
-              <video src={resultVideoUrl} controls autoPlay className="w-full rounded-xl" />
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
-            <div className="w-20 h-20 rounded-2xl mb-5 flex items-center justify-center" style={{ background: 'rgba(244,163,132,0.15)' }}>
-              {status === 'analyzing' || status === 'generating'
-                ? <Loader2 className="w-9 h-9 animate-spin" style={{ color: '#F4A384' }} />
-                : <Hand className="w-9 h-9" style={{ color: '#E2D5C2' }} />}
-            </div>
-            <p className="font-semibold text-sm mb-1.5" style={{ color: '#4A2C3F' }}>
-              {status === 'analyzing' ? 'Extracting transcript…' : status === 'generating' ? 'Rendering animation…' : 'Output Preview'}
-            </p>
-            <p className="text-xs max-w-xs leading-relaxed" style={{ color: '#7A5063' }}>
-              {status === 'analyzing' || status === 'generating' ? 'This may take a moment depending on video length.' : 'Enter a YouTube URL on the left to get started.'}
-            </p>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
