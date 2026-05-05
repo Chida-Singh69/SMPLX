@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "SMPL-X ASL Animator",
+  "version": "1.0",
+  "description": "Translate web text to ASL animations using SMPL-X.",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "js": ["content.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
