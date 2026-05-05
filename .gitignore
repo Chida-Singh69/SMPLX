@@ -81,9 +81,11 @@ pdf_part_2.md
 2312.02702v2.pdf
 pdf_text.txt
 
-generated/
 checkpoints/sign_mdm_v1/
+checkpoints/
 checkpoints_v2/
+checkpoints_v3/
+
+generated/
 generated_v2/
 generated_v3/
-checkpoints_v3/
