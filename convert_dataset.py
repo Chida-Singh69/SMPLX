@@ -24,12 +24,22 @@ except ImportError:
     print("[WARN] torch not available. Will skip torch tensor conversion.")
 
 
+def _torch_load_compat(obj, map_location=None):
+    """Compatibility wrapper for PyTorch 2.6+ (weights_only default True)."""
+    if not HAS_TORCH:
+        raise RuntimeError("torch required to load torch-serialized objects")
+    try:
+        return torch.load(obj, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(obj, map_location=map_location)
+
+
 class CPU_Unpickler(pickle.Unpickler):
     """Unpickler that forces all tensors to CPU."""
     def find_class(self, module, name):
         if HAS_TORCH and module == 'torch.storage' and name == '_load_from_bytes':
             import io
-            return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+            return lambda b: _torch_load_compat(io.BytesIO(b), map_location='cpu')
         return super().find_class(module, name)
 
 
@@ -47,7 +57,7 @@ def load_any(path: str) -> dict:
     elif ext == '.pt' or ext == '.pth':
         if not HAS_TORCH:
             raise RuntimeError(f"torch required to load {ext} files")
-        return torch.load(path, map_location='cpu')
+        return _torch_load_compat(path, map_location='cpu')
     else:
         raise ValueError(f"Unknown file extension: {ext}")
 

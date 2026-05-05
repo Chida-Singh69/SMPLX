@@ -1,20 +1,21 @@
 """
-Text-to-SignLanguage Diffusion Model Training Script.
+Text-to-SignLanguage Diffusion Model Training Script - V2.
 
-A simplified MDM-style (Motion Diffusion Model) implementation for
-generating SMPL-X sign language motion from English text.
+V2 Improvements over V1:
+  - SMPL-X kinematic tree (hardcoded skeleton, not learned)
+  - Anisotropic edge weights (learnable importance per bone)
+  - Text gating (multiplicative conditioning)
+  - 10% null-text dropout (enables real CFG at inference)
+  - Temporal coherence loss (smooth frame transitions)
+  - Tighter x0 clamp (±2.5)
 
-Architecture: Transformer Encoder + DDPM + CLIP text conditioning
-Target: Train on A100 with expanded ASL dataset.
-
-Usage:
-    python train_diffusion.py \
-        --pkl_dir unified_pkls/ \
-        --mapping mapping.json \
-        --save_dir checkpoints/sign_mdm_v1 \
+Usage (A100):
+    python train_diffusion_v2.py train \
+        --pkl_dir how2sign_pkls_cropTrue_shapeFalse \
+        --mapping merged_how2sign_mapping.json \
+        --save_dir checkpoints/sign_mdm_v2 \
         --batch_size 64 \
-        --epochs 200 \
-        --lr 1e-4
+        --epochs 500
 """
 
 import os
@@ -102,22 +103,74 @@ class TimestepEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Anatomically Informed GNN & LSTM Modules
+# SMPL-X Kinematic Tree (hardcoded parent-child bone connections)
+# ---------------------------------------------------------------------------
+
+def build_smplx_adjacency(num_joints=55):
+    """Build adjacency matrix from the SMPL-X kinematic tree."""
+    SMPLX_PARENTS = [
+        -1,  # 0: pelvis (root)
+         0,  # 1: left hip
+         0,  # 2: right hip
+         0,  # 3: spine1
+         1,  # 4: left knee
+         2,  # 5: right knee
+         3,  # 6: spine2
+         4,  # 7: left ankle
+         5,  # 8: right ankle
+         6,  # 9: spine3
+         7,  # 10: left foot
+         8,  # 11: right foot
+         9,  # 12: neck
+         9,  # 13: left collar
+         9,  # 14: right collar
+        12,  # 15: head
+        13,  # 16: left shoulder
+        14,  # 17: right shoulder
+        16,  # 18: left elbow
+        17,  # 19: right elbow
+        18,  # 20: left wrist
+        19,  # 21: right wrist
+        15,  # 22: jaw
+        15,  # 23: left eye
+        15,  # 24: right eye
+        # Left hand fingers (parent = left wrist = 20)
+        20, 25, 26, 27, 20, 29, 30, 31, 20, 33, 34, 35, 20, 37, 38,
+        # Right hand fingers (parent = right wrist = 21)
+        21, 40, 41, 42, 21, 44, 45, 46, 21, 48, 49, 50, 21, 52, 53,
+    ]
+    adj = torch.zeros(num_joints, num_joints)
+    for i, parent in enumerate(SMPLX_PARENTS):
+        if parent >= 0:
+            adj[i, parent] = 1.0
+            adj[parent, i] = 1.0
+        adj[i, i] = 1.0
+    row_sum = adj.sum(dim=1, keepdim=True).clamp(min=1.0)
+    adj = adj / row_sum
+    return adj
+
+
+# ---------------------------------------------------------------------------
+# Anatomically Informed GNN & LSTM Modules (V2)
 # ---------------------------------------------------------------------------
 
 class AnatomicalGNN(nn.Module):
-    """Message passing neural network for skeletal joints."""
+    """Message passing on SMPL-X kinematic tree with anisotropic kernels."""
     def __init__(self, num_joints=55, in_dim=3, hidden_dim=32, out_dim=256, layers=4):
         super().__init__()
         self.num_joints = num_joints
         self.joint_proj = nn.Linear(in_dim, hidden_dim)
         
-        # Pose embedding to break permutation equivariance
+        # Pose embedding to break permutation equivariance (Eq. 8 in paper)
         self.pose_emb = nn.Parameter(torch.randn(1, num_joints, hidden_dim) * 0.02)
         
-        # Learnable adjacency matrices to implicitly learn the kinematic tree
-        self.adjs = nn.ParameterList([
-            nn.Parameter(torch.eye(num_joints) + torch.randn(num_joints, num_joints) * 0.01) 
+        # Fixed adjacency from SMPL-X kinematic tree (NOT learnable)
+        base_adj = build_smplx_adjacency(num_joints)
+        self.register_buffer('base_adj', base_adj)
+        
+        # Anisotropic edge weights (learnable scale per edge, per layer)
+        self.edge_weights = nn.ParameterList([
+            nn.Parameter(torch.ones(num_joints, num_joints) * 0.1)
             for _ in range(layers)
         ])
         
@@ -132,16 +185,15 @@ class AnatomicalGNN(nn.Module):
         self.out_proj = nn.Linear(num_joints * hidden_dim, out_dim)
 
     def forward(self, x):
-        # x: [B*T, num_joints, in_dim]
         h = self.joint_proj(x)
         h = h + self.pose_emb
         
-        for adj, mlp in zip(self.adjs, self.mlps):
-            # Graph message passing
+        for ew, mlp in zip(self.edge_weights, self.mlps):
+            adj = self.base_adj * torch.sigmoid(ew)
             h_msg = torch.matmul(adj, h)
             h = h + mlp(h_msg)
             
-        h = h.view(h.shape[0], -1)  # Flatten joints
+        h = h.view(h.shape[0], -1)
         return self.out_proj(h)
 
 
@@ -149,9 +201,7 @@ class ExpressionEncoder(nn.Module):
     """MLP encoder for facial expressions and non-joint parameters."""
     def __init__(self, in_dim=17, hidden_dim=128, out_dim=256):
         super().__init__()
-        # Expression token to break permutation equivariance
         self.exp_emb = nn.Parameter(torch.randn(1, in_dim) * 0.02)
-        
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.GELU(),
@@ -159,21 +209,19 @@ class ExpressionEncoder(nn.Module):
         )
 
     def forward(self, x):
-        # x: [B*T, in_dim]
         return self.mlp(x + self.exp_emb)
 
 
 class SignDiffusionModel(nn.Module):
     """
-    GNN + LSTM based denoising network for SMPL-X motion generation.
-    Matches the 'Neural Sign Actors' architecture.
+    V2: GNN (kinematic tree) + Text Gating + LSTM decoder.
     """
     def __init__(
         self,
         pose_dim: int = 182,
         latent_dim: int = 512,
-        num_layers: int = 4,  # LSTM layers
-        num_heads: int = 8,   # Unused now, kept for config compatibility
+        num_layers: int = 4,
+        num_heads: int = 8,   # Unused, kept for config compat
         max_frames: int = 300,
         text_dim: int = 512,
     ):
@@ -182,7 +230,6 @@ class SignDiffusionModel(nn.Module):
         self.latent_dim = latent_dim
         self.max_frames = max_frames
         
-        # We assume first 165 dims are 55 joints (55 * 3), remaining 17 are expressions/shape/trans
         self.num_joints = 55
         self.joint_dim = 3
         self.exp_dim = pose_dim - (self.num_joints * self.joint_dim)
@@ -201,9 +248,16 @@ class SignDiffusionModel(nn.Module):
             out_dim=latent_dim // 2
         )
 
-        # Timestep & Text embeddings
+        # Timestep embedding
         self.time_embed = TimestepEmbedding(latent_dim)
-        self.text_proj = nn.Sequential(
+        
+        # Text gating (multiplicative conditioning, paper Sec 4.2)
+        self.text_gate_proj = nn.Sequential(
+            nn.Linear(text_dim, latent_dim),
+            nn.SiLU(),
+            nn.Linear(latent_dim, latent_dim),
+        )
+        self.text_bias_proj = nn.Sequential(
             nn.Linear(text_dim, latent_dim),
             nn.SiLU(),
             nn.Linear(latent_dim, latent_dim),
@@ -231,36 +285,28 @@ class SignDiffusionModel(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(
-        self,
-        x_t: torch.Tensor,      # [B, T, D] noisy motion
-        t: torch.Tensor,         # [B] timestep
-        text_emb: torch.Tensor,  # [B, text_dim] CLIP embedding
-        mask: torch.Tensor = None,  # [B, T] bool mask
-    ) -> torch.Tensor:
+    def forward(self, x_t, t, text_emb, mask=None):
         B, T, D = x_t.shape
 
-        # Split features into joints and expressions
         joints = x_t[:, :, :self.num_joints*self.joint_dim].contiguous().view(B * T, self.num_joints, self.joint_dim)
         expr = x_t[:, :, self.num_joints*self.joint_dim:].contiguous().view(B * T, self.exp_dim)
 
-        # Encode
-        h_joints = self.gnn_encoder(joints)  # [B*T, latent/2]
-        h_expr = self.exp_encoder(expr)      # [B*T, latent/2]
+        h_joints = self.gnn_encoder(joints)
+        h_expr = self.exp_encoder(expr)
 
-        # Combine
-        h = torch.cat([h_joints, h_expr], dim=-1)  # [B*T, latent]
-        h = h.view(B, T, -1)                       # [B, T, latent]
+        h = torch.cat([h_joints, h_expr], dim=-1)
+        h = h.view(B, T, -1)
 
-        # Add timestep and text conditioning (broadcast across time)
-        t_emb = self.time_embed(t)      # [B, latent]
-        c = self.text_proj(text_emb)    # [B, latent]
-        h = h + t_emb.unsqueeze(1) + c.unsqueeze(1)
+        # Timestep conditioning
+        t_emb = self.time_embed(t)
+        h = h + t_emb.unsqueeze(1)
+        
+        # Text gating (multiplicative): text controls WHICH joints activate
+        gate = torch.sigmoid(self.text_gate_proj(text_emb)).unsqueeze(1)
+        bias = self.text_bias_proj(text_emb).unsqueeze(1)
+        h = h * gate + bias
 
-        # LSTM Auto-regressive decoding
-        out, _ = self.lstm(h)  # [B, T, latent]
-
-        # Project back to SMPL-X pose space
+        out, _ = self.lstm(h)
         return self.output_proj(out)
 
 
@@ -269,12 +315,10 @@ class SignDiffusionModel(nn.Module):
 # ---------------------------------------------------------------------------
 
 class DDPMScheduler:
-    """Standard DDPM with cosine noise schedule."""
+    """Standard DDPM with linear noise schedule."""
 
     def __init__(self, num_steps: int = 1000, beta_start: float = 1e-4, beta_end: float = 0.02):
         self.num_steps = num_steps
-
-        # Linear schedule
         betas = torch.linspace(beta_start, beta_end, num_steps)
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
@@ -293,8 +337,7 @@ class DDPMScheduler:
         self.register = {k: v.to(device) for k, v in self.register.items()}
         return self
 
-    def add_noise(self, x_0: torch.Tensor, t: torch.Tensor) -> tuple:
-        """q(x_t | x_0) - add noise at timestep t."""
+    def add_noise(self, x_0, t):
         noise = torch.randn_like(x_0)
         sqrt_alpha = self.register['sqrt_alphas_cumprod'][t][:, None, None]
         sqrt_one_minus = self.register['sqrt_one_minus_alphas_cumprod'][t][:, None, None]
@@ -303,7 +346,6 @@ class DDPMScheduler:
 
     @torch.no_grad()
     def sample_step(self, model, x_t, t_idx, text_emb, mask=None, cfg_scale=1.0, null_emb=None):
-        """Single reverse diffusion step with CFG and x0 clipping."""
         B = x_t.shape[0]
         device = x_t.device
         t = torch.full((B,), t_idx, device=device, dtype=torch.long)
@@ -320,11 +362,11 @@ class DDPMScheduler:
         alpha_cumprod = self.register['alphas_cumprod'][t_idx]
         beta = self.register['betas'][t_idx]
 
-        # Predict x0 and clamp it to avoid mathematically exploding "alien" motions
+        # Predict x0 and clamp to realistic human range
         sqrt_alpha_cumprod = self.register['sqrt_alphas_cumprod'][t_idx]
         sqrt_one_minus = self.register['sqrt_one_minus_alphas_cumprod'][t_idx]
         pred_x0 = (x_t - sqrt_one_minus * pred_noise) / sqrt_alpha_cumprod
-        pred_x0 = torch.clamp(pred_x0, -2.5, 2.5) # Bounds motion to realistic human range
+        pred_x0 = torch.clamp(pred_x0, -2.5, 2.5)
 
         if t_idx > 0:
             alpha_cumprod_prev = self.register['alphas_cumprod'][t_idx - 1]
@@ -340,7 +382,6 @@ class DDPMScheduler:
 
     @torch.no_grad()
     def sample(self, model, text_emb, max_frames, pose_dim, mask=None, device='cuda', cfg_scale=1.0, null_emb=None):
-        """Full reverse diffusion: noise -> motion."""
         B = text_emb.shape[0]
         x = torch.randn(B, max_frames, pose_dim, device=device)
 
@@ -353,12 +394,12 @@ class DDPMScheduler:
 
 
 # ---------------------------------------------------------------------------
-# Training Loop
+# Training Loop (V2)
 # ---------------------------------------------------------------------------
 
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"[Train] Device: {device}")
+    print(f"[Train V2] Device: {device}")
 
     # Data
     data_module = SignLanguageDataModule(
@@ -386,7 +427,7 @@ def train(args):
     ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[Model] Parameters: {num_params:,} ({num_params/1e6:.1f}M)")
+    print(f"[Model V2] Parameters: {num_params:,} ({num_params/1e6:.1f}M)")
 
     # Scheduler
     scheduler = DDPMScheduler(num_steps=args.diffusion_steps).to(device)
@@ -419,12 +460,16 @@ def train(args):
         t0 = time.time()
 
         for batch_idx, batch in enumerate(train_loader):
-            motion = batch['motion'].to(device)   # [B, T, D]
-            mask = batch['mask'].to(device)        # [B, T]
-            texts = batch['text']                  # list of str
+            motion = batch['motion'].to(device)
+            mask = batch['mask'].to(device)
+            texts = batch['text']
 
             # Encode text
-            text_emb = text_encoder.encode(texts)  # [B, 512]
+            text_emb = text_encoder.encode(texts)
+            
+            # 10% null-text dropout for Classifier-Free Guidance
+            if random.random() < 0.1:
+                text_emb = torch.zeros_like(text_emb)
 
             # Sample random timesteps
             B = motion.shape[0]
@@ -445,7 +490,14 @@ def train(args):
                 pred_noise[:, :, 66:156] * mask.unsqueeze(-1),
                 noise[:, :, 66:156] * mask.unsqueeze(-1),
             )
-            total_loss = loss + 1.0 * hand_loss
+            
+            # Temporal coherence loss (Eq. 4 in paper)
+            temporal_loss = F.mse_loss(
+                pred_noise[:, 1:, :] * mask[:, 1:].unsqueeze(-1),
+                pred_noise[:, :-1, :] * mask[:, :-1].unsqueeze(-1),
+            )
+            
+            total_loss = loss + 1.0 * hand_loss + 0.1 * temporal_loss
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -517,17 +569,15 @@ def train(args):
 @torch.no_grad()
 def generate(args):
     """Generate motion from text prompt using trained model."""
+    # Force CPU to avoid CUDA compatibility issues with RTX 5060 Ti on local machine
     device = torch.device('cpu')
 
-    # Load config
     config_path = os.path.join(args.model_dir, 'config.json')
     with open(config_path) as f:
         config = json.load(f)
 
-    # Text encoder
     text_encoder = CLIPTextEncoder(device=str(device))
 
-    # Model
     model = SignDiffusionModel(
         pose_dim=config['pose_dim'],
         latent_dim=config['latent_dim'],
@@ -538,9 +588,6 @@ def generate(args):
     ).to(device)
 
     ckpt_path = os.path.join(args.model_dir, 'best_model.pt')
-    # PyTorch 2.6+ defaults `weights_only=True`, which can reject older checkpoints
-    # containing numpy scalar metadata. Our checkpoints are self-generated/trusted,
-    # so we load with `weights_only=False` when supported.
     try:
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     except TypeError:
@@ -550,67 +597,32 @@ def generate(args):
 
     scheduler = DDPMScheduler(num_steps=config.get('diffusion_steps', 1000)).to(device)
 
-    # Encode text
     text_emb = text_encoder.encode([args.text]).to(device)
-
-    # Null embedding for CFG (using empty string)
     null_emb = text_encoder.encode([""]).to(device)
 
-    # Generate
     T = args.num_frames
-    print(f"[Generate] Text: '{args.text}' | Frames: {T} | CFG Scale: 2.5")
+    print(f"[Generate V2] Text: '{args.text}' | Frames: {T} | CFG Scale: 2.5")
     motion = scheduler.sample(
-        model, 
-        text_emb, 
-        max_frames=T, 
-        pose_dim=config['pose_dim'], 
-        device=device,
-        cfg_scale=2.5,
-        null_emb=null_emb
+        model, text_emb, max_frames=T, pose_dim=config['pose_dim'],
+        device=device, cfg_scale=2.5, null_emb=null_emb
     )
-    motion = motion[0].cpu().numpy()  # [T, D]
+    motion = motion[0].cpu().numpy()
 
     # Denormalize
     mean = np.array(config['mean'])
     std = np.array(config['std'])
     motion = motion * std + mean
-
-    # Trim to reasonable length
     motion = motion[:args.num_frames]
 
-    # -----------------------------------------------------------------------
-    # Post-processing: smooth jitter + clamp to realistic human ranges
-    # (matches real How2Sign pkl statistics)
-    # -----------------------------------------------------------------------
+    # Post-processing
     from scipy.ndimage import gaussian_filter1d
-    
-    # 1. Per-region clamping (based on real data analysis)
-    motion[:, 3:66] = np.clip(motion[:, 3:66], -1.8, 1.8)      # Body
-    motion[:, 66:156] = np.clip(motion[:, 66:156], -1.5, 1.5)   # Hands
-    
-    # 2. Zero out shape params (real data always has constant neutral shape)
+    motion[:, 3:66] = np.clip(motion[:, 3:66], -1.8, 1.8)
+    motion[:, 66:156] = np.clip(motion[:, 66:156], -1.5, 1.5)
     motion[:, 159:169] = 0.0
-    
-    # 3. Clamp translation to realistic range
     motion[:, 179:182] = np.clip(motion[:, 179:182], -0.1, 20.0)
-    
-    # 4. Temporal smoothing (Gaussian filter to kill jitter)
-    # Hands move faster, so they need less smoothing than the body
+    sigma = 3.0
     for d in range(motion.shape[1]):
-        if d < 3: # Global Orient (HEAVY smoothing to stop wobbling)
-            s = 10.0
-        elif d < 66: # Body
-            s = 3.0
-        elif d < 156: # Hands
-            s = 1.0
-        else: # Jaw/Transl
-            s = 2.0
-        motion[:, d] = gaussian_filter1d(motion[:, d], sigma=s, mode='nearest')
-
-    # 5. Lock Translation (prevents floating/drifting)
-    # The real dataset has a static camera, so translation shouldn't change much.
-    # We freeze it to the dataset's average translation.
-    motion[:, 179:182] = mean[179:182]
+        motion[:, d] = gaussian_filter1d(motion[:, d], sigma=sigma, mode='nearest')
 
     # Save
     os.makedirs(args.output_dir, exist_ok=True)
@@ -620,8 +632,6 @@ def generate(args):
         motion_f32 = motion.astype(np.float32)
         pickle.dump({'smplx': motion_f32}, f)
     print(f"Saved: {out_path} shape={motion_f32.shape}")
-
-    # Also save as npz for easy inspection
     np.savez(os.path.join(args.output_dir, 'generated_motion.npz'), smplx=motion_f32)
 
 
@@ -630,16 +640,16 @@ def generate(args):
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Sign Language Diffusion Model")
+    parser = argparse.ArgumentParser(description="Sign Language Diffusion Model V2")
     sub = parser.add_subparsers(dest='command')
 
     # Train
     tp = sub.add_parser('train')
     tp.add_argument('--pkl_dir', required=True)
     tp.add_argument('--mapping', required=True)
-    tp.add_argument('--save_dir', default='checkpoints/sign_mdm_v1')
+    tp.add_argument('--save_dir', default='checkpoints_v2/sign_mdm_v2')
     tp.add_argument('--batch_size', type=int, default=64)
-    tp.add_argument('--epochs', type=int, default=200)
+    tp.add_argument('--epochs', type=int, default=500)
     tp.add_argument('--lr', type=float, default=1e-4)
     tp.add_argument('--weight_decay', type=float, default=0.05)
     tp.add_argument('--max_frames', type=int, default=300)
@@ -656,7 +666,7 @@ if __name__ == '__main__':
     gp.add_argument('--model_dir', required=True)
     gp.add_argument('--text', required=True)
     gp.add_argument('--num_frames', type=int, default=150)
-    gp.add_argument('--output_dir', default='generated/')
+    gp.add_argument('--output_dir', default='generated_v2/')
 
     args = parser.parse_args()
 

@@ -15,6 +15,14 @@ from word_to_smplx import WordToSMPLX
 from sentence_to_smplx import SentenceToSMPLX
 from sentence_matcher import SentenceMatcher
 from vae_model import SignLanguageVAE
+
+
+def _torch_load_compat(obj, map_location=None):
+    """Compatibility wrapper for PyTorch 2.6+ (weights_only default True)."""
+    try:
+        return torch.load(obj, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(obj, map_location=map_location)
 from pose_dataset import load_stats
 
 try:
@@ -112,7 +120,7 @@ def get_vae_resources():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Load checkpoint
-        ckpt = torch.load(ckpt_path, map_location=device)
+        ckpt = _torch_load_compat(ckpt_path, map_location=device)
         cfg = ckpt["config"]
         
         model = SignLanguageVAE(
@@ -322,7 +330,7 @@ def _peek_num_frames_from_pkl(pkl_path: str):
     class CPU_Unpickler(pickle.Unpickler):
         def find_class(self, module, name):
             if module == 'torch.storage' and name == '_load_from_bytes':
-                return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+                return lambda b: _torch_load_compat(io.BytesIO(b), map_location='cpu')
             return super().find_class(module, name)
 
     with open(pkl_path, 'rb') as f:

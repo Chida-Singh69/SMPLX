@@ -182,8 +182,8 @@ class SentenceToSMPLX:
                 # Position for frontal standing view with full body and hands visible
                 self.cam_pose = np.eye(4)
                 self.cam_pose[0, 3] = 0.0      # x: center
-                self.cam_pose[1, 3] = 0.15    # y: focus on upper body
-                self.cam_pose[2, 3] = 1.5    # z: closer zoom
+                self.cam_pose[1, 3] = 0.15    # y: moved up to give headroom for high hand gestures
+                self.cam_pose[2, 3] = 1.7      # z: zoomed out slightly for wider framing
                 
                 # Offscreen renderer: renders to images (not screen display)
                 self.renderer = pyrender.OffscreenRenderer(
@@ -220,7 +220,13 @@ class SentenceToSMPLX:
         class CPU_Unpickler(pickle.Unpickler):
             def find_class(self, module, name):
                 if module == 'torch.storage' and name == '_load_from_bytes':
-                    return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+                    def _load_bytes(b):
+                        try:
+                            return torch.load(io.BytesIO(b), map_location='cpu', weights_only=False)
+                        except TypeError:
+                            return torch.load(io.BytesIO(b), map_location='cpu')
+
+                    return _load_bytes
                 return super().find_class(module, name)
         
         with open(pkl_path, "rb") as f:

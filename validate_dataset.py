@@ -20,11 +20,20 @@ except ImportError:
     HAS_TORCH = False
 
 
+def _torch_load_compat(obj, map_location=None):
+    if not HAS_TORCH:
+        raise RuntimeError("PyTorch is required to load this object")
+    try:
+        return torch.load(obj, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(obj, map_location=map_location)
+
+
 class CPU_Unpickler(pickle.Unpickler):
     """Safely loads PyTorch tensors saved on a GPU into CPU memory."""
     def find_class(self, module, name):
         if HAS_TORCH and module == 'torch.storage' and name == '_load_from_bytes':
-            return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+            return lambda b: _torch_load_compat(io.BytesIO(b), map_location='cpu')
         return super().find_class(module, name)
 
 

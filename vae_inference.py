@@ -65,7 +65,10 @@ def _pad_or_truncate(seq: np.ndarray, seq_len: int) -> np.ndarray:
 
 
 def load_model(ckpt_path: str, device: torch.device) -> Tuple[SignLanguageVAE, Dict]:
-    ckpt = torch.load(ckpt_path, map_location=device)
+    try:
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(ckpt_path, map_location=device)
     cfg = ckpt["config"]
     model = SignLanguageVAE(
         seq_len=cfg["seq_len"],
