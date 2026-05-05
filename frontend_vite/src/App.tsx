@@ -25,10 +25,10 @@ function ParticleCanvas() {
 
     const mouse = { x: -9999, y: -9999 };
     const MOUSE_RADIUS = 200;      // attraction zone around cursor
-    const MOUSE_STRENGTH = 0.02;   // how strongly particles are pulled
+    const MOUSE_STRENGTH = 0.08;   // how strongly particles are pulled
     const N = 100;                  // particle count
     const DIST = 200;              // max connection distance
-    const BASE_SPEED = 0.3;        // base drift speed
+    const BASE_SPEED = 0.6;        // base drift speed
     const pts: { x: number; y: number; vx: number; vy: number; ox: number; oy: number }[] = [];
 
     const resize = () => { w = c.width = window.innerWidth; h = c.height = window.innerHeight; };
@@ -141,11 +141,11 @@ function LoadingScreen({ onDone }: { onDone: () => void }) {
           background: 'linear-gradient(135deg, #00d4aa, #00b894)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 22, fontWeight: 800, color: '#050505',
-          fontFamily: "'Plus Jakarta Sans', sans-serif",
+          fontFamily: "'Outfit', sans-serif",
         }}>S</div>
         <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.90)', margin: '0 0 4px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>SMPL-X</p>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>ASL Translation</p>
+          <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.90)', margin: '0 0 4px', fontFamily: "'Outfit', sans-serif" }}>SMPL-X</p>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Outfit', sans-serif" }}>ASL Translation</p>
         </div>
       </div>
       <div className="loading-bar-track"><div className="loading-bar-fill" /></div>
@@ -169,7 +169,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('home');
   const [gender, setGender] = useState<Gender>('neutral');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const scrollRef = useScrollReveal();
+
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('light-theme');
+    } else {
+      document.documentElement.classList.remove('light-theme');
+    }
+  }, [theme]);
 
   return (
     <>
@@ -177,7 +186,7 @@ export default function App() {
 
       <div style={{
         display: 'flex', flexDirection: 'column', minHeight: '100vh',
-        fontFamily: "'Plus Jakarta Sans', sans-serif",
+        fontFamily: "'Outfit', sans-serif",
         background: '#050505', color: 'rgba(255,255,255,0.92)',
         opacity: loading ? 0 : 1,
         transition: 'opacity 0.6s ease',
@@ -232,13 +241,19 @@ export default function App() {
                 color: gender === g ? '#050505' : 'rgba(255,255,255,0.50)',
               }}>{g}</button>
             ))}
+            
+            <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)', margin: '0 8px' }} />
+            
+            <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} style={{
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.8)', padding: '4px 12px', borderRadius: 20,
+              cursor: 'pointer', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'all 0.2s', fontFamily: "'Outfit', sans-serif"
+            }}>
+              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            </button>
           </div>
 
-          <span style={{
-            fontSize: 11, padding: '4px 13px', borderRadius: 20, fontWeight: 600,
-            background: 'rgba(0,212,170,0.08)', color: '#00d4aa',
-            border: '1px solid rgba(0,212,170,0.15)',
-          }}>How2Sign Dataset</span>
         </header>
 
         {/* ── Content ── */}
@@ -276,7 +291,7 @@ export default function App() {
                     fontWeight: 600, fontSize: 13,
                     transition: 'all 0.22s cubic-bezier(.4,0,.2,1)',
                     whiteSpace: 'nowrap', position: 'relative',
-                    fontFamily: "'Plus Jakarta Sans', sans-serif",
+                    fontFamily: "'Outfit', sans-serif",
                   }}>
                   <span style={{ fontSize: 14, lineHeight: 1 }}>{n.icon}</span>
                   {active && <span style={{ fontSize: 12.5 }}>{n.label}</span>}
@@ -328,34 +343,50 @@ function AboutSection() {
   return (
     <div ref={sectionRef} style={{ maxWidth: 1100, margin: '0 auto' }}>
 
-      {/* ═══ HERO — centered, large ═══ */}
-      <div className="animate-on-scroll" style={{ textAlign: 'center', padding: '60px 0 80px', position: 'relative' }}>
+      {/* ═══ HERO — 2-Column with Image ═══ */}
+      <div className="animate-on-scroll" style={{ display: 'flex', alignItems: 'center', gap: 64, padding: '60px 0 100px', position: 'relative' }}>
         {/* glow orbs */}
-        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -80, left: '50%', transform: 'translateX(-50%)', width: 500, height: 300, borderRadius: '50%', background: 'rgba(0,212,170,0.06)', filter: 'blur(100px)', pointerEvents: 'none' }} />
+        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -40, left: 0, width: 400, height: 400, borderRadius: '50%', background: 'rgba(0,212,170,0.06)', filter: 'blur(100px)', pointerEvents: 'none' }} />
 
-        <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ position: 'relative', zIndex: 1, flex: 1 }}>
           <span style={{
-            display: 'inline-block', fontSize: 11, letterSpacing: '0.25em', color: '#00d4aa',
+            display: 'inline-block', fontSize: 12, letterSpacing: '0.25em', color: '#00d4aa',
             textTransform: 'uppercase', fontWeight: 700, marginBottom: 24,
             padding: '6px 16px', borderRadius: 20,
-            background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.15)',
+            background: 'rgba(0,212,170,0.10)', border: '1px solid rgba(0,212,170,0.20)',
           }}>Product Overview</span>
 
           <h1 style={{
-            fontSize: 'clamp(36px, 5vw, 64px)', fontWeight: 700,
-            color: 'rgba(255,255,255,0.95)', margin: '0 0 24px',
-            letterSpacing: '-2px', lineHeight: 1.1,
+            fontSize: 'clamp(40px, 5vw, 64px)', fontWeight: 700,
+            color: '#ffffff', margin: '0 0 24px',
+            letterSpacing: '-1.5px', lineHeight: 1.15, textShadow: '0 4px 20px rgba(0,0,0,0.5)',
           }}>
             English to ASL,<br />
             <span style={{ background: 'linear-gradient(135deg, #00d4aa, #00f5c8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Powered by AI</span>
           </h1>
 
           <p style={{
-            fontSize: 17, color: 'rgba(255,255,255,0.45)', margin: '0 auto',
-            maxWidth: 560, lineHeight: 1.7, fontWeight: 400,
+            fontSize: 18, color: 'rgba(255,255,255,0.7)', margin: '0 0 32px',
+            maxWidth: 560, lineHeight: 1.6, fontWeight: 400,
           }}>
             Transform spoken English into photorealistic 3D sign language animations using SMPL-X body models and the How2Sign dataset — directly in your browser.
           </p>
+        </div>
+
+        <div style={{ flex: 1, position: 'relative' }}>
+          <div style={{
+            position: 'absolute', inset: -15, background: 'linear-gradient(135deg, rgba(0,212,170,0.2), transparent)',
+            borderRadius: '2rem', filter: 'blur(20px)', zIndex: 0
+          }} />
+          <img
+            src="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80"
+            alt="Cyber tech network"
+            style={{
+              width: '100%', height: 'auto', borderRadius: '1.5rem', position: 'relative', zIndex: 1,
+              border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+              objectFit: 'cover', aspectRatio: '4/3'
+            }}
+          />
         </div>
       </div>
 
@@ -409,6 +440,20 @@ function AboutSection() {
               <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.38)', margin: 0, lineHeight: 1.65 }}>{s.desc}</p>
             </div>
           ))}
+        </div>
+
+        {/* Panoramic Process Image */}
+        <div className="animate-on-scroll" style={{ marginTop: 48, borderRadius: '1.5rem', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 10px 40px rgba(0,0,0,0.4)', position: 'relative', height: 280 }}>
+          <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to top, rgba(5,5,5,0.8), transparent)' }} />
+          <img 
+            src="https://images.unsplash.com/photo-1633412802994-5c058f151b66?auto=format&fit=crop&w=1200&q=80" 
+            alt="AI Rendering Process" 
+            style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }}
+          />
+          <div style={{ position: 'absolute', bottom: 24, left: 32, zIndex: 2 }}>
+            <p style={{ margin: 0, color: '#00d4aa', fontSize: 13, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Rendering Engine</p>
+            <p style={{ margin: '4px 0 0', color: 'rgba(255,255,255,0.9)', fontSize: 20, fontWeight: 600 }}>Real-time SMPL-X generation</p>
+          </div>
         </div>
       </div>
 
@@ -469,25 +514,32 @@ function AboutSection() {
       {/* ═══ CTA BANNER ═══ */}
       <div className="animate-on-scroll" style={{
         borderRadius: '1.5rem', overflow: 'hidden', position: 'relative',
-        padding: '56px 48px', textAlign: 'center',
-        background: 'linear-gradient(145deg, #0a0f0d 0%, #0d1a16 50%, #050a08 100%)',
-        border: '1px solid rgba(0,212,170,0.12)',
+        padding: '70px 48px', textAlign: 'center',
+        border: '1px solid rgba(0,212,170,0.15)',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
       }}>
-        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -60, right: -60, width: 300, height: 300, borderRadius: '50%', background: '#00d4aa', filter: 'blur(120px)', opacity: 0.07, pointerEvents: 'none' }} />
-        <div className="anim-float-slow" style={{ position: 'absolute', bottom: -40, left: -40, width: 250, height: 250, borderRadius: '50%', background: '#009688', filter: 'blur(100px)', opacity: 0.05, pointerEvents: 'none' }} />
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 0,
+          backgroundImage: 'url("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80")',
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          opacity: 0.35, filter: 'grayscale(50%) contrast(1.2)'
+        }} />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'linear-gradient(180deg, rgba(5,5,5,0.5) 0%, rgba(5,5,5,0.9) 100%)' }} />
 
+        <div className="anim-pulse-glow" style={{ position: 'absolute', top: -60, right: -60, width: 300, height: 300, borderRadius: '50%', background: '#00d4aa', filter: 'blur(120px)', opacity: 0.15, pointerEvents: 'none' }} />
+        
         <div style={{ position: 'relative', zIndex: 1 }}>
-          <h2 style={{ fontSize: 'clamp(24px, 3vw, 36px)', fontWeight: 700, color: 'rgba(255,255,255,0.92)', margin: '0 0 14px', letterSpacing: '-0.5px' }}>
+          <h2 style={{ fontSize: 'clamp(28px, 3.5vw, 42px)', fontWeight: 800, color: '#ffffff', margin: '0 0 16px', letterSpacing: '-0.5px' }}>
             Ready to translate?
           </h2>
-          <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.40)', margin: '0 auto 28px', maxWidth: 440, lineHeight: 1.65 }}>
+          <p style={{ fontSize: 16, color: 'rgba(255,255,255,0.7)', margin: '0 auto 32px', maxWidth: 440, lineHeight: 1.65 }}>
             Switch to the Video tab to get started — paste a YouTube URL and watch your first ASL animation come to life.
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <span className="btn-primary" style={{ padding: '12px 32px', fontSize: 14, borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'default' }}>
+            <span className="btn-primary" style={{ padding: '14px 36px', fontSize: 15, borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'default', fontWeight: 700 }}>
               ▶ Try It Now
             </span>
-            <span className="btn-ghost" style={{ padding: '12px 24px', fontSize: 14, borderRadius: 12, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+            <span className="btn-ghost" style={{ padding: '14px 28px', fontSize: 15, borderRadius: 12, fontFamily: "'Outfit', sans-serif", fontWeight: 600 }}>
               View Documentation
             </span>
           </div>

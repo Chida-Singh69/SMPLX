@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Play, Hand, Loader2, ChevronRight } from 'lucide-react';
 import { API } from '@/lib/api';
+import LiteYouTubeEmbed from 'react-lite-youtube-embed';
+import 'react-lite-youtube-embed/dist/LiteYouTubeEmbed.css';
 import type { Gender } from '../App';
 
 export function YoutubeTab({ gender }: { gender: Gender }) {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'analyzed' | 'generating' | 'done' | 'error'>('idle');
   const [errorMsg, setError] = useState('');
   const [transcriptData, setTranscriptData] = useState<any>(null);
@@ -96,14 +98,14 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
           </div>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
             {youtubeId ? (
-              <iframe
-                key={youtubeId}
-                src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1`}
-                title="YouTube video"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                style={{ width: '100%', aspectRatio: '16/9', border: 'none' }}
-              />
+              <div style={{ width: '100%', aspectRatio: '16/9' }}>
+                <LiteYouTubeEmbed
+                  id={youtubeId}
+                  title="YouTube video"
+                  playerClass="lty-playbtn"
+                  wrapperClass="yt-lite"
+                />
+              </div>
             ) : (
               <div style={{ textAlign: 'center', padding: 40 }}>
                 <div style={{

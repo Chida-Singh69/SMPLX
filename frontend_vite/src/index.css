@@ -8,8 +8,8 @@
 
 /* ── Design Tokens ── */
 :root {
-  --font-display: 'Plus Jakarta Sans', sans-serif;
-  --font-body: 'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Outfit', sans-serif;
+  --font-body: 'Outfit', sans-serif;
 
   /* Dark background palette */
   --bg-primary: #050505;
@@ -60,6 +60,39 @@
   --destructive: #ef4444;
 }
 
+/* ═══════════════════════════════════════════════
+   LIGHT MODE (Refined Creamy Theme)
+   ═══════════════════════════════════════════════ */
+html.light-theme {
+  /* 
+    invert(0.94): makes black -> soft off-white instead of blinding white
+    hue-rotate(180deg): preserves the teal accent
+    sepia(0.15): adds a subtle creamy warmth
+    contrast(0.90): softens harsh shadows and text
+  */
+  filter: invert(0.94) hue-rotate(180deg) sepia(0.15) contrast(0.90);
+  background: #000;
+}
+
+/* Font adjustments for light mode (dark text on light backgrounds looks heavier) */
+html.light-theme body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 500;
+}
+html.light-theme * {
+  text-shadow: none !important;
+}
+
+/* Re-invert media so they look normal (undoing the html filter) */
+html.light-theme img,
+html.light-theme video,
+html.light-theme canvas,
+html.light-theme iframe,
+html.light-theme .yt-lite {
+  filter: invert(1.06) hue-rotate(180deg) sepia(0) contrast(1.1);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -81,8 +114,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --font-sans: 'Plus Jakarta Sans', sans-serif;
-  --font-serif: 'Plus Jakarta Sans', sans-serif;
+  --font-sans: 'Outfit', sans-serif;
+  --font-serif: 'Outfit', sans-serif;
 }
 
 @layer base {
@@ -91,7 +124,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-family: 'Outfit', sans-serif;
     overflow-x: hidden;
   }
 }
@@ -347,7 +380,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.90);
   border-radius: 12px;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
   transition: all 0.2s ease;
 }
 
@@ -367,7 +400,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.90);
   border-radius: 12px;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
 }
 
 .dark-select option {
@@ -382,7 +415,7 @@
   border: none;
   border-radius: 12px;
   font-weight: 700;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
