@@ -98,6 +98,7 @@ def parse_args():
     ap.add_argument("--model-path", default="models")
     ap.add_argument("--max-frames", type=int, default=240, help="Render at most this many frames")
     ap.add_argument("--device", default="cpu", help="Device to use (e.g., cpu, cuda)")
+    ap.add_argument("--text", type=str, default=None, help="Optional text to render as proportional subtitles")
     return ap.parse_args()
 
 
@@ -110,12 +111,32 @@ def main():
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    subtitle_timeline = None
+    if args.text:
+        # Create a basic proportional cumulative timeline
+        T = min(seq.shape[0], args.max_frames) if args.max_frames else seq.shape[0]
+        words = args.text.split()
+        if words:
+            total_chars = sum(len(w) for w in words)
+            timeline = []
+            curr = 0.0
+            prefix = ""
+            for w in words:
+                frames = T * (len(w) / total_chars) if total_chars > 0 else T / len(words)
+                start = int(round(curr))
+                curr += frames
+                end = int(round(curr)) - 1
+                prefix = (prefix + " " + w).strip()
+                timeline.append({'start_frame': start, 'end_frame': max(start, end), 'text': prefix})
+            subtitle_timeline = timeline
+
     animator = SentenceToSMPLX(model_path=args.model_path, gender=args.gender, device=args.device)
     animator.render_animation(
         pose_data=pose_data,
         save_path=str(out_path),
         fps=args.fps,
         max_frames=args.max_frames,
+        subtitle_timeline=subtitle_timeline
     )
 
     print(f"[DONE] Wrote preview video: {out_path}")

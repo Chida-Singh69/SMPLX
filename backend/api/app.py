@@ -28,7 +28,7 @@ def _torch_load_compat(obj, map_location=None):
         return torch.load(obj, map_location=map_location, weights_only=False)
     except TypeError:
         return torch.load(obj, map_location=map_location)
-from pose_dataset import load_stats
+from backend.core.pose_dataset import load_stats
 
 try:
     from flask_cors import CORS
@@ -267,6 +267,41 @@ def chunk_transcript_by_timestamps(transcript_list, max_gap=0.8, max_chunk_words
         })
 
     return chunks
+def build_sentence_timeline(chunks, start_offset=0):
+    """
+    Builds a word-level cumulative timeline for a sentence, proportional to word length.
+    chunks: list of dicts: [{'text': 'hello world', 'frames': 30}, ...]
+    start_offset: starting frame index
+    """
+    timeline = []
+    curr = float(start_offset)
+    prefix = ""
+    for idx, chunk in enumerate(chunks):
+        fc = chunk['frames']
+        if fc <= 0: continue
+        words = str(chunk['text']).split()
+        if not words:
+            timeline.append({'start_frame': int(round(curr)), 'end_frame': int(round(curr + fc)) - 1, 'text': prefix})
+            curr += fc
+            if idx < len(chunks) - 1:
+                curr += 6
+            continue
+            
+        total_chars = sum(len(w) for w in words)
+        for i, w in enumerate(words):
+            frames = fc * (len(w) / total_chars) if total_chars > 0 else fc / len(words)
+            start = int(round(curr))
+            curr += frames
+            end = int(round(curr)) - 1
+            
+            if i == len(words) - 1 and idx < len(chunks) - 1:
+                end += 6
+                curr += 6
+                
+            prefix = (prefix + " " + w).strip()
+            timeline.append({'start_frame': start, 'end_frame': max(start, end), 'text': prefix})
+            
+    return timeline, curr
 
 
 def blend_adjacent_chunks(pose_sequences, blend_frames=6):
@@ -490,7 +525,15 @@ def render_sentence_api():
         output_path = os.path.join(output_dir, output_filename)
         
         pose_data = sentence_animator.load_pose_sequence(pkl_path)
-        sentence_animator.render_animation(pose_data, save_path=output_path)
+        
+        with open(how2sign_mapping_path, "r", encoding='utf-8') as f:
+            mapping = json.load(f)
+        text = mapping.get(pkl_file, "")
+        
+        params = _extract_smplx_params_array(pose_data)
+        subtitle_timeline, _ = build_sentence_timeline([{'text': text, 'frames': params.shape[0]}], 0)
+        
+        sentence_animator.render_animation(pose_data, save_path=output_path, subtitle_timeline=subtitle_timeline)
         
         return jsonify({
             "status": "success",
@@ -557,24 +600,32 @@ def render_text_mp4():
                 }
 
         pose_sequences = []
+        valid_chunks = []
         if result['strategy'] == 'chunked':
             for chunk_match in result['matches']:
                 match = chunk_match['match']
                 pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
-                pose_sequences.append(_extract_smplx_params_array(pose_data))
+                params = _extract_smplx_params_array(pose_data)
+                pose_sequences.append(params)
+                valid_chunks.append({'text': match.get('sentence', chunk_match.get('input_chunk', '')), 'frames': params.shape[0]})
         else:
             match = result['matches'][0]
             pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
-            pose_sequences.append(_extract_smplx_params_array(pose_data))
+            params = _extract_smplx_params_array(pose_data)
+            pose_sequences.append(params)
+            valid_chunks.append({'text': text, 'frames': params.shape[0]})
 
-        all_params = np.vstack(pose_sequences)
+        all_params = blend_adjacent_chunks(pose_sequences, blend_frames=6)
         pose_data_out = {'smplx': all_params, 'gender': gender, 'fps': fps}
+        
+        subtitle_timeline, _ = build_sentence_timeline(valid_chunks, 0)
 
         sentence_animator.render_animation(
             pose_data_out,
             save_path=cache_path,
             fps=fps,
             max_frames=max_frames,
+            subtitle_timeline=subtitle_timeline
         )
 
         return send_file(cache_path, mimetype='video/mp4')
@@ -715,26 +766,37 @@ def render_text_json():
         if not (use_cache and os.path.exists(cache_path)):
             _, sentence_animator = get_animators(gender)
             pose_sequences = []
+            valid_chunks = []
             
             if result['strategy'] == 'vae_blend' and vae_res:
-                pose_sequences.append(vae_res['pose_sequence'])
+                params = vae_res['pose_sequence']
+                pose_sequences.append(params)
+                valid_chunks.append({'text': text, 'frames': params.shape[0]})
             elif result['strategy'] == 'chunked':
                 for chunk_match in result['matches']:
                     match = chunk_match['match']
                     pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
-                    pose_sequences.append(_extract_smplx_params_array(pose_data))
+                    params = _extract_smplx_params_array(pose_data)
+                    pose_sequences.append(params)
+                    valid_chunks.append({'text': match.get('sentence', chunk_match.get('input_chunk', '')), 'frames': params.shape[0]})
             else:
                 match = result['matches'][0]
                 pose_data = sentence_animator.load_pose_sequence(match['pkl_path'])
-                pose_sequences.append(_extract_smplx_params_array(pose_data))
+                params = _extract_smplx_params_array(pose_data)
+                pose_sequences.append(params)
+                valid_chunks.append({'text': text, 'frames': params.shape[0]})
 
-            all_params = np.vstack(pose_sequences)
+            all_params = blend_adjacent_chunks(pose_sequences, blend_frames=6)
             pose_data_out = {'smplx': all_params, 'gender': gender, 'fps': fps}
+            
+            subtitle_timeline, _ = build_sentence_timeline(valid_chunks, 0)
+            
             sentence_animator.render_animation(
                 pose_data_out,
                 save_path=cache_path,
                 fps=fps,
                 max_frames=max_frames,
+                subtitle_timeline=subtitle_timeline
             )
 
         # Summarize match info for debugging
@@ -900,8 +962,12 @@ def asl_from_youtube():
             'skipped_words': skipped_words
         }), 400
     
+    # Create valid_chunks for word-level subtitles
+    valid_chunks = [{'text': w, 'frames': p.shape[0]} for w, p in zip(successful_words, pose_data_sequences)]
+    subtitle_timeline, _ = build_sentence_timeline(valid_chunks, 0)
+    
     # Concatenate all sequences
-    all_params = np.vstack(pose_data_sequences)
+    all_params = blend_adjacent_chunks(pose_data_sequences, blend_frames=6)
     
     # Create proper pose_data structure
     pose_data = {
@@ -910,7 +976,7 @@ def asl_from_youtube():
         'fps': 15
     }
     
-    animator.render_animation(pose_data, save_path=video_path, fps=15)
+    animator.render_animation(pose_data, save_path=video_path, fps=15, subtitle_timeline=subtitle_timeline)
     
     response_data = {
         'url': f"/output/{video_filename}",
@@ -1214,16 +1280,15 @@ def asl_from_youtube_sentences():
     if include_subtitles:
         current_frame = 0
         for result in translation_results:
-            frame_count = int(result.get('frames', 0) or 0)
-            if result.get('strategy') == 'error' or frame_count <= 0:
+            if result.get('strategy') == 'error':
                 continue
-
-            subtitle_timeline.append({
-                'start_frame': current_frame,
-                'end_frame': current_frame + frame_count - 1,
-                'text': result.get('original', '')
-            })
-            current_frame += frame_count
+            
+            # Since a sentence could have been generated from chunks, we treat the sentence as one chunk here
+            # Or if it's chunked, the 'frames' is total frames.
+            fc = int(result.get('frames', 0) or 0)
+            if fc > 0:
+                sentence_timeline, current_frame = build_sentence_timeline([{'text': result.get('original', ''), 'frames': fc}], current_frame)
+                subtitle_timeline.extend(sentence_timeline)
     
     # Create pose_data structure
     pose_data = {

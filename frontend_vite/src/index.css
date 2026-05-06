@@ -93,6 +93,11 @@ html.light-theme .yt-lite {
   filter: invert(1.06) hue-rotate(180deg) sepia(0) contrast(1.1);
 }
 
+/* Prevent double-inversion for iframes inside already-inverted containers */
+html.light-theme .yt-lite iframe {
+  filter: none !important;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

@@ -136,16 +136,10 @@ function LoadingScreen({ onDone }: { onDone: () => void }) {
   return (
     <div className={`loading-screen ${fade ? 'fade-out' : ''}`}>
       <div className="loading-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: 16,
-          background: 'linear-gradient(135deg, #00d4aa, #00b894)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 22, fontWeight: 800, color: '#050505',
-          fontFamily: "'Outfit', sans-serif",
-        }}>S</div>
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.90)', margin: '0 0 4px', fontFamily: "'Outfit', sans-serif" }}>SMPL-X</p>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Outfit', sans-serif" }}>ASL Translation</p>
+        <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 96, height: 96, objectFit: 'contain', marginBottom: 4 }} />
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <p style={{ fontSize: 34, fontWeight: 800, color: '#ffffff', margin: '0 0 4px', letterSpacing: '-0.5px' }}>Silentvoice</p>
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Outfit', sans-serif" }}>ASL Translation</p>
         </div>
       </div>
       <div className="loading-bar-track"><div className="loading-bar-fill" /></div>
@@ -218,16 +212,11 @@ export default function App() {
           background: 'rgba(5,5,5,0.75)', backdropFilter: 'blur(20px)',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-              background: 'linear-gradient(135deg, #00d4aa, #00b894)',
-              color: '#050505', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 800, fontSize: 14,
-            }}>S</div>
-            <div>
-              <p style={{ fontWeight: 700, fontSize: 13.5, color: 'rgba(255,255,255,0.92)', margin: 0 }}>SMPL-X</p>
-              <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.35)', margin: 0 }}>ASL Animation Suite</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 46, height: 46, objectFit: 'contain' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <p style={{ fontWeight: 800, fontSize: 22, color: '#ffffff', margin: '0 0 1px', letterSpacing: '-0.5px' }}>Silentvoice</p>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0 }}>ASL Animation Suite</p>
             </div>
           </div>
 
@@ -567,10 +556,11 @@ function UserSection() {
       <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 20 }}>
         <div style={{
           width: 70, height: 70, borderRadius: '50%', flexShrink: 0,
-          background: 'linear-gradient(135deg, #00d4aa, #00b894)',
+          background: 'rgba(255,255,255,0.1)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 28, fontWeight: 700, color: '#050505',
-        }}>B</div>
+        }}>
+          <img src="/logo.png" alt="User Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+        </div>
         <div style={{ flex: 1 }}>
           <h2 style={{ fontSize: 20, fontWeight: 800, color: 'rgba(255,255,255,0.92)', margin: '0 0 4px' }}>Bhoomika</h2>
           <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)', margin: '0 0 10px' }}>bhoomika@smplx.dev · How2Sign Researcher</p>
