@@ -11,6 +11,14 @@ from PIL import Image, ImageDraw, ImageFont
 import pickle
 import io
 
+from backend.core.avatar_appearance import (
+    AvatarAppearance,
+    GENDER_DEFAULT_OUTFIT,
+    OUTFIT_CATALOG,
+    SKIN_TONES,
+    create_proxy_mesh,
+)
+
 # Import pyrender for 3D rendering
 try:
     import pyrender
@@ -24,7 +32,7 @@ class SentenceToSMPLX:
     Renders SMPL-X animations from sentence-level pose data.
     Similar to WordToSMPLX but optimized for longer sequences.
     """
-    def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None):
+    def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None, outfit=None, skin_tone='medium'):
         # Device setup - use GPU if available, otherwise fallback to CPU
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -79,43 +87,23 @@ class SentenceToSMPLX:
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         
+        # --- Avatar Appearance ---
+        # Resolve outfit: use explicit value, or fall back to gender default
+        if outfit is None:
+            outfit = GENDER_DEFAULT_OUTFIT.get(gender.lower(), 'tshirt')
+        self.appearance = AvatarAppearance(outfit=outfit, skin_tone=skin_tone)
+        
         try:
             with torch.no_grad():
-                # neutral pose to find torso bounding box
                 neutral_output = self.smplx_model(
                     body_pose=torch.zeros((1, 63)).to(self.device),
                     global_orient=torch.zeros((1, 3)).to(self.device),
                     return_verts=True
                 )
                 v = neutral_output.vertices[0].cpu().numpy()
-                x, y, z = v[:, 0], v[:, 1], v[:, 2]
-                
-                # Smooth/Round boundary logic
-                valid_y = (y > -0.42) & (y < 0.18)
-                
-                # Round neck cut (carve sphere at throat)
-                neck_dist = np.sqrt(x**2 + (y - 0.17)**2 + z**2)
-                round_neck = neck_dist > 0.08
-                
-                # Round sleeves (keep vertices near the torso core or within a radius from shoulders)
-                d_left = np.sqrt((x + 0.18)**2 + (y - 0.12)**2 + z**2)
-                d_right = np.sqrt((x - 0.18)**2 + (y - 0.12)**2 + z**2)
-                in_sleeves = (d_left < 0.22) | (d_right < 0.22) | (np.abs(x) < 0.2)
-                
-                self.tshirt_indices = np.where(valid_y & round_neck & in_sleeves)[0]
-                self.tshirt_mask_set = set(self.tshirt_indices)
-                
-                self.hair_indices = None
-                self.eyes_indices = None
-                self.glasses_indices = None
-                self.beard_indices = None
-
-                self.glasses_indices = None
-                self.beard_indices = None
+                self.appearance.compute_masks(v)
         except Exception as e:
-            print(f"Warning: Failed to create garment mask: {e}")
-            self.tshirt_indices = None
-            self.tshirt_mask_set = set()
+            print(f"Warning: Failed to compute appearance masks: {e}")
         
         # Lazy initialization - only create renderer when actually rendering
         self.camera = None
@@ -487,27 +475,7 @@ class SentenceToSMPLX:
             
         return frames
     
-    def _create_proxy_mesh(self, mesh, indices, mask_set, offset=0.005, laplacian=0):
-        if indices is None or len(indices) == 0:
-            return None
-        proxy_verts = np.copy(mesh.vertices)
-        normals = mesh.vertex_normals
-        proxy_verts[indices] += normals[indices] * offset
-        proxy_faces = []
-        for face in mesh.faces:
-            if face[0] in mask_set and face[1] in mask_set and face[2] in mask_set:
-                proxy_faces.append(face)
-        if not proxy_faces:
-            return None
-        p_mesh = trimesh.Trimesh(vertices=proxy_verts, faces=proxy_faces)
-        
-        if laplacian > 0:
-            try:
-                trimesh.smoothing.filter_laplacian(p_mesh, iterations=laplacian)
-            except Exception:
-                pass
-                
-        return p_mesh
+    # _create_proxy_mesh is now handled by avatar_appearance.create_proxy_mesh
 
     def _render_pyrender_frame(self, mesh):
         """
@@ -527,11 +495,13 @@ class SentenceToSMPLX:
             return self._render_trimesh_frame_fallback(mesh)
         
         try:
-            skin_material = pyrender.MetallicRoughnessMaterial(
-                metallicFactor=0.0,
-                roughnessFactor=0.7,
-                baseColorFactor=[0.8, 0.6, 0.5, 1.0] # Default skin
-            )
+            # Skin material from appearance config
+            skin_material = self.appearance.get_skin_material()
+            if skin_material is None:
+                skin_material = pyrender.MetallicRoughnessMaterial(
+                    metallicFactor=0.0, roughnessFactor=0.7,
+                    baseColorFactor=[0.8, 0.6, 0.5, 1.0]
+                )
             
             # Create pyrender Mesh from trimesh
             pyrender_mesh = pyrender.Mesh.from_trimesh(mesh, material=skin_material)
@@ -540,12 +510,9 @@ class SentenceToSMPLX:
             scene = pyrender.Scene(bg_color=[0.0, 0.0, 0.0, 1.0])  # Black background
             scene.add(pyrender_mesh)
             
-            # --- T-SHIRT LAYER ---
-            tshirt_mesh = self._create_proxy_mesh(mesh, self.tshirt_indices, self.tshirt_mask_set, offset=0.008, laplacian=2)
-            if tshirt_mesh is not None:
-                mat = pyrender.MetallicRoughnessMaterial(
-                    baseColorFactor=[0.247, 0.784, 1.0, 1.0], doubleSided=True)
-                scene.add(pyrender.Mesh.from_trimesh(tshirt_mesh, material=mat))
+            # --- GARMENT LAYERS (outfit-dependent) ---
+            for garment_mesh, garment_mat in self.appearance.build_scene_layers(mesh):
+                scene.add(pyrender.Mesh.from_trimesh(garment_mesh, material=garment_mat))
 
             scene.add(self.camera, pose=self.cam_pose)
             scene.add(self.light, pose=self.cam_pose)

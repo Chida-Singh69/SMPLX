@@ -28,7 +28,7 @@ import sys
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from sentence_to_smplx import SentenceToSMPLX
+from backend.core.sentence_to_smplx import SentenceToSMPLX
 
 
 def load_pkl_cpu(path: str):
