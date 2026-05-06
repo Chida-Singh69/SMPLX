@@ -44,7 +44,7 @@ except ImportError:
 class WordToSMPLX:
     def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None):
         if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = torch.device('cpu')  # Force CPU to avoid CUDA compatibility errors
         else:
             self.device = torch.device(device)
             
@@ -304,7 +304,7 @@ class WordToSMPLX:
             if (i + 1) % 10 == 0:
                 print(f"  Rendered {i + 1}/{N} frames")
         
-        print(f"✓ Rendering complete!")
+        print(f"[OK] Rendering complete!")
         
         # Video Encoding - save to MP4 using imageio
         if save_path and frames:
@@ -379,6 +379,14 @@ class WordToSMPLX:
             
             # Render to offscreen buffer
             color, depth = self.renderer.render(scene)
+            
+            # EXPLICIT CLEANUP to prevent cyclic GC on random threads
+            scene.clear()
+            if tshirt_mesh is not None:
+                del tshirt_mesh
+            del pyrender_mesh
+            del scene
+            del skin_material
             
             # Return RGB image (discard alpha channel if present)
             if color.shape[2] == 4:

@@ -6,24 +6,26 @@ Fixes over V2:
   2. Per-sample null-text dropout (not per-batch) -> proper CFG training
   3. Transformer decoder instead of LSTM (attends across all frames)
   4. Cosine noise schedule (better SNR for motion data)
-  5. Temporal loss on predicted x0, not pred_noise (correct signal)
-  6. Per-region loss weighting with normalized targets (body/hands/face)
+  5. Raw MSE + hand upweighting loss (stronger gradients than per-region normalization)
+  6. Temporal loss delayed to epoch 50+ (pred_x0 is garbage early on)
   7. AMP (mixed precision) + gradient checkpointing for A100 speed
   8. Larger GNN hidden_dim (64) + LayerNorm after each message pass
   9. EMA (exponential moving average) of weights for stable generation
- 10. DDIM sampler (50 steps at inference instead of 1000)
+ 10. DDPM (1000-step) + DDIM (50-step) samplers (default: DDPM for variance)
+ 11. Region-adaptive post-processing smoothing (hands σ=1, body σ=3, GO σ=10)
+ 12. Normalization std floor clamped to 0.05 (prevents 300x amplification of dead dims)
 
 Usage (A100):
     python train_diffusion_v3.py train \
         --pkl_dir data/raw_poses/how2sign_pkls_cropTrue_shapeFalse \
         --mapping data/metadata/merged_how2sign_mapping.json \
         --save_dir checkpoints/mdm_weights/checkpoints_v3/sign_mdm_v3 \
-        --batch_size 64 --epochs 300
+        --batch_size 64 --epochs 500
 
     python train_diffusion_v3.py generate \
-        --model_dir checkpoints/sign_mdm_v3 \
+        --model_dir checkpoints/mdm_weights/checkpoints_v3/sign_mdm_v3 \
         --text "hello how are you" \
-        --num_frames 120 --cfg_scale 3.0
+        --num_frames 120 --cfg_scale 1.5 --sampler ddpm
 """
 
 import os, sys, json, math, time, argparse, random, pickle
@@ -160,6 +162,46 @@ class NoiseScheduler:
 
             if i % 10 == 0:
                 print(f"  DDIM {i+1}/{ddim_steps}")
+
+        return x
+
+    @torch.no_grad()
+    def ddpm_sample(self, model, text_emb, null_emb, max_frames, pose_dim,
+                    device, cfg_scale=3.0):
+        """Full 1000-step DDPM stochastic sampler — better motion variance."""
+        B = text_emb.shape[0]
+        x = torch.randn(B, max_frames, pose_dim, device=device)
+
+        alphas = 1.0 - self.betas
+        alphas_cumprod_prev = F.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
+        posterior_var = self.betas * (1.0 - alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+
+        for t_idx in reversed(range(self.num_steps)):
+            t = torch.full((B,), t_idx, device=device, dtype=torch.long)
+
+            # CFG
+            pn_text = model(x, t, text_emb)
+            pn_null = model(x, t, null_emb)
+            pred_noise = pn_null + cfg_scale * (pn_text - pn_null)
+
+            # Predict x0 and clamp
+            x0 = self.predict_x0(x, t_idx, pred_noise)
+            x0 = torch.clamp(x0, -2.5, 2.5)
+
+            if t_idx > 0:
+                ac = self.alphas_cumprod[t_idx]
+                ac_prev = alphas_cumprod_prev[t_idx]
+                beta = self.betas[t_idx]
+                sa = self.sqrt_alphas_cumprod[t_idx]
+                mean = (sa * beta / (1.0 - ac)) * x0 + \
+                       (alphas[t_idx].sqrt() * (1.0 - ac_prev) / (1.0 - ac)) * x
+                noise = torch.randn_like(x)
+                x = mean + posterior_var[t_idx].sqrt() * noise
+            else:
+                x = x0
+
+            if t_idx % 100 == 0:
+                print(f"  DDPM {self.num_steps - t_idx}/{self.num_steps}")
 
         return x
 
@@ -518,17 +560,28 @@ def train(args):
                 x_t, noise = scheduler.add_noise(motion, t)
                 pred_noise = model(x_t, t, text_emb, mask)
 
-                # --- Temporal loss on predicted x0, NOT pred_noise ---
-                pred_x0 = scheduler.predict_x0(x_t, t, pred_noise)
-                real_x0 = motion
-                temporal_loss = F.mse_loss(
-                    (pred_x0[:, 1:] - pred_x0[:, :-1]) * mask[:, 1:].unsqueeze(-1),
-                    (real_x0[:, 1:] - real_x0[:, :-1]) * mask[:, 1:].unsqueeze(-1),
+                # --- Raw MSE loss (stronger gradients than per-region normalization) ---
+                main_loss = F.mse_loss(
+                    pred_noise * mask.unsqueeze(-1),
+                    noise * mask.unsqueeze(-1),
+                )
+                # Hand upweighting (2x via extra hand loss term)
+                hand_loss = F.mse_loss(
+                    pred_noise[:, :, 66:156] * mask.unsqueeze(-1),
+                    noise[:, :, 66:156] * mask.unsqueeze(-1),
                 )
 
-                # Main per-region loss
-                main_loss = region_weighted_loss(pred_noise, noise, mask)
-                total_loss = main_loss + 0.1 * temporal_loss
+                # Temporal loss — only after epoch 50 when denoising is stable
+                temporal_loss = torch.tensor(0.0, device=device)
+                if epoch >= 50:
+                    pred_x0 = scheduler.predict_x0(x_t, t, pred_noise)
+                    real_x0 = motion
+                    temporal_loss = F.mse_loss(
+                        (pred_x0[:, 1:] - pred_x0[:, :-1]) * mask[:, 1:].unsqueeze(-1),
+                        (real_x0[:, 1:] - real_x0[:, :-1]) * mask[:, 1:].unsqueeze(-1),
+                    )
+
+                total_loss = main_loss + 1.0 * hand_loss + 0.1 * temporal_loss
 
             optimizer.zero_grad()
             scaler.scale(total_loss).backward()
@@ -625,14 +678,22 @@ def generate(args):
     null_emb = encode_text(clip_model, clip_module, [""], str(device))
 
     T = args.num_frames
-    print(f"[Generate V3] '{args.text}' | frames={T} | cfg={args.cfg_scale} | ddim_steps={args.ddim_steps}")
+    sampler = getattr(args, 'sampler', 'ddim')
+    print(f"[Generate V3] '{args.text}' | frames={T} | cfg={args.cfg_scale} | sampler={sampler}")
 
-    motion = scheduler.ddim_sample(
-        model, text_emb, null_emb,
-        max_frames=T, pose_dim=config['pose_dim'],
-        device=device, cfg_scale=args.cfg_scale,
-        ddim_steps=args.ddim_steps,
-    )
+    if sampler == 'ddpm':
+        motion = scheduler.ddpm_sample(
+            model, text_emb, null_emb,
+            max_frames=T, pose_dim=config['pose_dim'],
+            device=device, cfg_scale=args.cfg_scale,
+        )
+    else:
+        motion = scheduler.ddim_sample(
+            model, text_emb, null_emb,
+            max_frames=T, pose_dim=config['pose_dim'],
+            device=device, cfg_scale=args.cfg_scale,
+            ddim_steps=args.ddim_steps,
+        )
     motion = motion[0].cpu().numpy()
 
     # Denormalize
@@ -640,14 +701,22 @@ def generate(args):
     std = np.array(config['std'])
     motion = motion * std + mean
 
-    # Post-process
+    # Post-process: region-adaptive smoothing (matching V1's approach)
     from scipy.ndimage import gaussian_filter1d
     motion[:, 3:66]   = np.clip(motion[:, 3:66],   -1.8, 1.8)
     motion[:, 66:156] = np.clip(motion[:, 66:156],  -1.5, 1.5)
     motion[:, 159:169] = 0.0
     motion[:, 179:182] = np.clip(motion[:, 179:182], -0.1, 20.0)
     for d in range(motion.shape[1]):
-        motion[:, d] = gaussian_filter1d(motion[:, d], sigma=2.0, mode='nearest')
+        if d < 3:        # Global orient — heavy smoothing to stop wobble
+            s = 10.0
+        elif d < 66:     # Body
+            s = 3.0
+        elif d < 156:    # Hands — less smoothing to preserve articulation
+            s = 1.0
+        else:            # Jaw/expression/translation
+            s = 2.0
+        motion[:, d] = gaussian_filter1d(motion[:, d], sigma=s, mode='nearest')
 
     os.makedirs(args.output_dir, exist_ok=True)
     out_path = os.path.join(args.output_dir, 'generated_motion.pkl')
@@ -687,8 +756,9 @@ if __name__ == '__main__':
     gp.add_argument('--model_dir',   required=True)
     gp.add_argument('--text',        required=True)
     gp.add_argument('--num_frames',  type=int,   default=150)
-    gp.add_argument('--cfg_scale',   type=float, default=3.0)
+    gp.add_argument('--cfg_scale',   type=float, default=1.5)
     gp.add_argument('--ddim_steps',  type=int,   default=50)
+    gp.add_argument('--sampler',     choices=['ddim', 'ddpm'], default='ddpm')
     gp.add_argument('--output_dir',  default='data/cache/generated_v3/')
 
     args = p.parse_args()

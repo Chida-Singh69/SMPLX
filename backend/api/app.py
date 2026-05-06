@@ -28,6 +28,7 @@ def _torch_load_compat(obj, map_location=None):
         return torch.load(obj, map_location=map_location, weights_only=False)
     except TypeError:
         return torch.load(obj, map_location=map_location)
+
 from backend.core.pose_dataset import load_stats
 
 try:
@@ -122,7 +123,7 @@ def get_vae_resources():
 
     try:
         print("[INFO] Loading VAE model components...")
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")  # Force CPU to avoid CUDA compatibility issues
         
         # Load checkpoint
         ckpt = _torch_load_compat(ckpt_path, map_location=device)
@@ -170,7 +171,7 @@ def translate_with_vae(text, gender='neutral', top_k=5, rerank=False):
     if not matches:
         return None
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")  # Force CPU to avoid CUDA compatibility issues
     z_list = []
     weights = []
     
@@ -211,7 +212,7 @@ def translate_with_vae(text, gender='neutral', top_k=5, rerank=False):
     }
 
 
-def chunk_transcript_by_timestamps(transcript_list, max_gap=0.8, max_chunk_words=25):
+def chunk_transcript_by_timestamps(transcript_list, max_gap=0.5, max_chunk_words=10):
     """
     Group YouTube transcript entries into chunks using timestamp gaps.
     
@@ -447,7 +448,7 @@ def available_words():
 @app.route('/api/list_poses')
 def list_poses():
     try:
-        from poses_to_animation import PoseAssembler
+        from backend.core.poses_to_animation import PoseAssembler
         poses_dir = os.path.join(current_dir, "..", "..", "data", "raw_poses", "poses")
         assembler = PoseAssembler(poses_dir)
         return jsonify(assembler.list_folders())
@@ -457,7 +458,7 @@ def list_poses():
 @app.route('/api/render_poses', methods=['POST'])
 def render_pose_api():
     try:
-        from poses_to_animation import render_pose_folder
+        from backend.core.poses_to_animation import render_pose_folder
         data = request.get_json()
         folder_name = data.get('folder')
         gender = data.get('gender', 'neutral')
@@ -543,7 +544,7 @@ def render_sentence_api():
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route('/api/render_text_mp4', methods=['POST'])
@@ -869,8 +870,21 @@ def extract_transcript():
     missing_words = [w for w in word_mapping if w['status'] == 'missing']
     unique_available = list(dict.fromkeys([w['clean'] for w in available_words]))
     
+    # Split transcript into sentences using timestamp-aware chunking
+    transcript_chunks = chunk_transcript_by_timestamps(transcript_list)
+    sentences = [c['text'] for c in transcript_chunks]
+    if not sentences:
+        import re
+        sentences_text = re.split(r'[.!?]+', full_transcript)
+        sentences_text = [s.strip() for s in sentences_text if s.strip()]
+        # If fallback, just create dummy chunks
+        transcript_chunks = [{'text': s, 'start_time': 0, 'end_time': 0} for s in sentences_text]
+        sentences = sentences_text
+
     return jsonify({
         'transcript': full_transcript,
+        'sentences': sentences,
+        'chunks': transcript_chunks,
         'word_mapping': word_mapping,
         'total_words': len(word_mapping),
         'available_count': len(available_words),
@@ -1351,6 +1365,112 @@ def asl_from_youtube_sentences():
         'subtitles_enabled': bool(include_subtitles),
         'note': f"This translation uses semantic sentence matching from 30K+ How2Sign dataset{' with VAE blending' if use_vae else ''}"
     })
+
+import threading
+import queue
+import uuid
+
+# --- Global Pyrender Thread ---
+# OpenGL contexts must remain on the thread they were created on.
+render_queue = queue.Queue()
+render_results = {}
+
+def global_render_worker():
+    import gc
+    print("[INFO] Started global Pyrender rendering thread")
+    while True:
+        task = render_queue.get()
+        if task is None: break
+        session_id, idx, sentence, start_time, end_time, pose_data_out, chunk_path, sentence_animator = task
+        try:
+            sentence_animator.render_animation(
+                pose_data_out,
+                save_path=chunk_path,
+                fps=15,
+                subtitle_timeline=[{'start_frame': 0, 'end_frame': pose_data_out['smplx'].shape[0]-1, 'text': sentence}]
+            )
+            render_results[session_id].put({'status': 'success', 'idx': idx})
+        except Exception as e:
+            render_results[session_id].put({'status': 'error', 'idx': idx, 'error': str(e)})
+        
+        # Force garbage collection ON THIS THREAD.
+        # Pyrender objects (Scene, Mesh) have OpenGL destructors that MUST run on this thread.
+        gc.collect()
+        render_queue.task_done()
+
+# Start the dedicated OpenGL rendering thread
+threading.Thread(target=global_render_worker, daemon=True).start()
+
+# --- Endpoint: Stream ASL chunks (SSE) ---
+@app.route('/api/stream_youtube_chunks', methods=['POST'])
+def stream_youtube_chunks():
+    data = request.get_json()
+    chunks = data.get('chunks', [])
+    sentences = data.get('sentences', [])  # Fallback
+    if sentences and not chunks:
+        chunks = [{'text': s, 'start_time': 0, 'end_time': 0} for s in sentences]
+        
+    gender = data.get('gender', 'neutral').lower()
+    
+    if not chunks:
+        return jsonify({'error': 'Missing chunks or sentences'}), 400
+
+    def generate():
+        session_id = str(uuid.uuid4())
+        render_results[session_id] = queue.Queue()
+        
+        yield f"data: {json.dumps({'status': 'starting', 'total_chunks': len(chunks)})}\n\n"
+        
+        matcher = get_sentence_matcher()
+        _, sentence_animator = get_animators(gender)
+        
+        for idx, chunk in enumerate(chunks):
+            sentence = chunk.get('text', '')
+            start_time = chunk.get('start_time', 0)
+            end_time = chunk.get('end_time', 0)
+            
+            try:
+                result = matcher.translate_sentence(sentence, verbose=False)
+                if result.get('strategy') == 'error' or not result.get('matches'):
+                    continue
+                    
+                match = result['matches'][0]
+                if 'match' in match:
+                    # Handle chunked strategy where match is nested
+                    pkl_path = match['match']['pkl_path']
+                else:
+                    pkl_path = match['pkl_path']
+                    
+                pose_data = sentence_animator.load_pose_sequence(pkl_path)
+                
+                import time
+                chunk_filename = f"yt_chunk_{int(time.time())}_{idx}.mp4"
+                chunk_path = os.path.join(output_dir, chunk_filename)
+                
+                smplx_params = _extract_smplx_params_array(pose_data)
+                pose_data_out = {'smplx': smplx_params, 'gender': gender, 'fps': 15}
+                
+                # Submit to dedicated rendering thread
+                render_queue.put((session_id, idx, sentence, start_time, end_time, pose_data_out, chunk_path, sentence_animator))
+                
+                # Wait for rendering to complete
+                res = render_results[session_id].get()
+                if res['status'] == 'success':
+                    yield f"data: {json.dumps({'status': 'chunk_ready', 'chunk_index': idx, 'url': f'/output/{chunk_filename}', 'text': sentence, 'start_time': start_time, 'end_time': end_time})}\n\n"
+                else:
+                    print(f"Error on chunk {idx}: {res.get('error')}")
+            except Exception as e:
+                print(f"Error on chunk {idx}: {e}")
+                pass
+                
+        # Cleanup session
+        if session_id in render_results:
+            del render_results[session_id]
+            
+        yield f"data: {json.dumps({'status': 'done'})}\n\n"
+        
+    from flask import Response
+    return Response(generate(), mimetype='text/event-stream')
 
 # --- Serve generated videos ---
 @app.route('/output/<path:filename>')

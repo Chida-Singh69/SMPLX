@@ -139,8 +139,9 @@ class SignLanguageDataset(Dataset):
             all_data = np.concatenate(all_frames, axis=0)
             self.mean = all_data.mean(axis=0).astype(np.float32)
             self.std = all_data.std(axis=0).astype(np.float32)
-            # Avoid division by zero
-            self.std[self.std < 1e-6] = 1.0
+            # Avoid division by zero & don't amplify near-zero-variance dims
+            # (36/182 dims have std<0.01 — mostly fingers that barely move)
+            self.std[self.std < 0.05] = 1.0
             print(f"  Stats computed from {len(all_frames)} sequences, "
                   f"{all_data.shape[0]} total frames")
     

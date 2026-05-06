@@ -144,16 +144,30 @@ class SentenceMatcher:
         
         # Initialize sentence transformer model
         print("  Loading sentence transformer model...")
-        self.model = sentence_transformers.SentenceTransformer('all-MiniLM-L6-v2')
+        self.model = sentence_transformers.SentenceTransformer('all-MiniLM-L6-v2', device='cpu')  # Force CPU
         
-        # Encode all sentences
-        print(f"  Encoding {len(self.sentence_list)} sentences...")
-        self.embeddings = self.model.encode(
-            self.sentence_list,
-            convert_to_numpy=True,
-            show_progress_bar=True,
-            batch_size=128
-        )
+        # Check cache
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        emb_cache_path = os.path.join(cache_dir, 'sentence_embeddings.npy')
+        
+        if os.path.exists(emb_cache_path):
+            print(f"  [CACHE] Loading sentence embeddings from {emb_cache_path}...")
+            self.embeddings = np.load(emb_cache_path)
+            print("  [CACHE] Loaded embeddings!")
+        else:
+            # Encode all sentences
+            print(f"  Encoding {len(self.sentence_list)} sentences...")
+            self.embeddings = self.model.encode(
+                self.sentence_list,
+                convert_to_numpy=True,
+                show_progress_bar=True,
+                batch_size=128,
+                device='cpu'  # Force CPU
+            )
+            # Save to cache
+            print(f"  [CACHE] Saving embeddings to {emb_cache_path}...")
+            np.save(emb_cache_path, self.embeddings)
         
         # Build FAISS index
         print("  Building FAISS index...")
@@ -190,7 +204,7 @@ class SentenceMatcher:
             self._build_index()
         
         # Encode query
-        query_embedding = self.model.encode([query.lower().strip()])
+        query_embedding = self.model.encode([query.lower().strip()], device='cpu')  # Force CPU
         faiss.normalize_L2(query_embedding)
         
         # Search (bi-encoder)

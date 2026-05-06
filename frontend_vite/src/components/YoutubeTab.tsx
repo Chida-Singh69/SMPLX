@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+
 import { Play, Hand, Loader2, ChevronRight } from 'lucide-react';
 import { API } from '@/lib/api';
 import LiteYouTubeEmbed from 'react-lite-youtube-embed';
@@ -11,7 +11,8 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'analyzed' | 'generating' | 'done' | 'error'>('idle');
   const [errorMsg, setError] = useState('');
   const [transcriptData, setTranscriptData] = useState<any>(null);
-  const [resultVideoUrl, setResultVideoUrl] = useState('');
+  const [playlist, setPlaylist] = useState<{url: string, text: string}[]>([]);
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
 
   // Extract YouTube video ID from URL
   const getYoutubeId = (u: string) => {
@@ -28,7 +29,7 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
     try {
       const r = await fetch(`${API}/extract_transcript`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ youtube_url: url }),
+        body: JSON.stringify({ url: url }),
       });
       if (!r.ok) throw new Error((await r.json()).error || 'Failed to extract transcript');
       setTranscriptData(await r.json()); setStatus('analyzed');
@@ -38,13 +39,44 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
   const handleGenerate = async () => {
     if (!transcriptData) return;
     setStatus('generating');
+    setPlaylist([]);
+    setCurrentVideoIndex(0);
+    setError('');
+
     try {
-      const r = await fetch(`${API}/asl_from_youtube_sentences`, {
+      const r = await fetch(`${API}/api/stream_youtube_chunks`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sentences: transcriptData.sentences, youtube_video_id: transcriptData.video_id, gender }),
+        body: JSON.stringify({ chunks: transcriptData.chunks, gender }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || 'Generation failed');
-      setResultVideoUrl(URL.createObjectURL(await r.blob())); setStatus('done');
+      if (!r.ok) throw new Error('Generation failed');
+      if (!r.body) throw new Error('Streaming not supported');
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.replace('data: ', '').trim();
+            if (!dataStr) continue;
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.status === 'chunk_ready') {
+                const fullUrl = `${API}${data.url}`;
+                setPlaylist(prev => [...prev, { url: fullUrl, text: data.text, start: data.start_time, end: data.end_time }]);
+              } else if (data.status === 'done') {
+                setStatus('done');
+              }
+            } catch (e) { console.error('Error parsing SSE:', e); }
+          }
+        }
+      }
     } catch (e: any) { setError(e.message); setStatus('error'); }
   };
 
@@ -126,17 +158,35 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
         <div style={{ ...card, minHeight: 420, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: 'rgba(255,255,255,0.90)' }}>Sign Language Translation</span>
-            {status === 'done' && (
-              <a href={resultVideoUrl} download="youtube_asl.mp4" style={{
-                fontSize: 11.5, padding: '4px 12px', borderRadius: 10, fontWeight: 600,
-                background: 'rgba(0,212,170,0.10)', color: '#00d4aa', textDecoration: 'none',
-                border: '1px solid rgba(0,212,170,0.15)',
-              }}>⬇ Download</a>
-            )}
+
           </div>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: status === 'done' ? '20px' : '40px', textAlign: 'center' }}>
-            {status === 'done' ? (
-              <video src={resultVideoUrl} controls autoPlay style={{ width: '100%', borderRadius: 12 }} />
+            {(status === 'done' || playlist.length > 0) ? (
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+                {playlist[currentVideoIndex] && (
+                  <>
+                    <video 
+                      src={playlist[currentVideoIndex].url} 
+                      controls 
+                      autoPlay 
+                      onEnded={() => {
+                        if (currentVideoIndex < playlist.length - 1) {
+                          setCurrentVideoIndex(prev => prev + 1);
+                        }
+                      }}
+                      style={{ width: '100%', borderRadius: 12, border: '1px solid rgba(0,212,170,0.2)' }} 
+                    />
+                    <div style={{ fontSize: 13, color: '#00d4aa', fontWeight: 600 }}>
+                      Playing {currentVideoIndex + 1} of {playlist.length}
+                    </div>
+                  </>
+                )}
+                {status === 'generating' && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
+                    <Loader2 className="w-3 h-3 animate-spin" /> Rendering next chunk...
+                  </div>
+                )}
+              </div>
             ) : (
               <>
                 <div style={{

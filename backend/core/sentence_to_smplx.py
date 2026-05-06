@@ -25,9 +25,9 @@ class SentenceToSMPLX:
     Similar to WordToSMPLX but optimized for longer sequences.
     """
     def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None):
-        # Device setup - use GPU if available, otherwise fallback to CPU
+        # Device setup - use CPU to avoid CUDA compatibility errors
         if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = torch.device('cpu')  # Force CPU to avoid CUDA compatibility errors
         else:
             self.device = torch.device(device)
         
