@@ -6,8 +6,10 @@ __pycache__/
 *$py.class
 *.so
 .Python
+dist-info/
+*.egg-info/
 
-# Virtual envs (repo has venv_py*/)
+# Virtual envs
 .venv/
 venv/
 ENV/
@@ -23,17 +25,19 @@ venv_py*/
 .cache/
 pip-wheel-metadata/
 
-
-# Documentation (optional - remove these lines if you want to commit docs)
-pdf_part_1.md
-pdf_part_2.md
-md files/
-poses/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
+# -------------------------
+# Node / Frontend (Vite)
+# -------------------------
+frontend_vite/node_modules/
+frontend_vite/dist/
+frontend_vite/.env.local
+frontend_vite/.env.*.local
 
+# -------------------------
 # IDE
 # -------------------------
 .vscode/
@@ -41,6 +45,8 @@ poses/
 *.swp
 *.swo
 *~
+*.sublime-workspace
+*.sublime-project
 
 # -------------------------
 # OS
@@ -55,26 +61,48 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+*.pid
 
-# Project: generated outputs
 # -------------------------
-output/
+# Environment
+# -------------------------
+.env
+.env.local
+.env.*.local
 
-# Optional: local Streamlit secrets
+# -------------------------
+# Project: Streamlit
+# -------------------------
 .streamlit/secrets.toml
+.streamlit/cache/
 
 # -------------------------
-# Project: datasets / large assets (download locally)
+# Project: Large datasets / assets (download locally)
 # -------------------------
-poses/
-models/
-datasett/
-how2sign_pkls_cropTrue_shapeFalse/
-how2sign-trial/
-word-level-dataset-cpu-fixed/
+data/raw_poses/datasett/
+data/raw_poses/datasett/**
+data/raw_poses/how2sign_pkls_cropTrue_shapeFalse/
+data/raw_poses/how2sign_pkls_cropTrue_shapeFalse/**
+data/raw_poses/word-level-dataset-cpu-fixed/
+data/raw_poses/word-level-dataset-cpu-fixed/**
+data/raw_poses/poses/
+data/raw_poses/poses/**
 
 # -------------------------
-# Documentation drafts (optional)
+# Project: Generated outputs / caches
+# -------------------------
+checkpoints/
+checkpoints/**
+data/cache/
+data/cache/**
+data/mp4_outputs/
+data/mp4_outputs/**
+
+# -------------------------
+# Project: Documentation drafts
 # -------------------------
 pdf_part_1.md
 pdf_part_2.md
+2312.02702v2.pdf
+pdf_text.txt
+models/**
