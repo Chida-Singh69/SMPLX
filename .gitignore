@@ -99,6 +99,14 @@ data/mp4_outputs/
 data/mp4_outputs/**
 
 # -------------------------
+# Project: Root-level data (datasets)
+# -------------------------
+datasett/
+poses/
+output/
+data/raw_poses/
+
+# -------------------------
 # Project: Documentation drafts
 # -------------------------
 pdf_part_1.md

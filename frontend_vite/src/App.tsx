@@ -158,6 +158,107 @@ function useScrollReveal() {
   return observe;
 }
 
+/* ═══ Welcome Avatar Component ═══ */
+function WelcomeAvatar() {
+  const [visible, setVisible] = useState(true);
+  const [showBubble, setShowBubble] = useState(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    let raf: number;
+    const render = () => {
+      if (video.paused || video.ended) {
+        raf = requestAnimationFrame(render);
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const l = frame.data.length;
+
+      for (let i = 0; i < l; i += 4) {
+        const r = frame.data[i];
+        const g = frame.data[i + 1];
+        const b = frame.data[i + 2];
+        
+        // Improved Luma key with slight feathering
+        const brightness = (r + g + b) / 3;
+        if (brightness < 30) {
+          // Smoothly fade out near-black pixels
+          frame.data[i + 3] = brightness < 10 ? 0 : (brightness - 10) * 12.75;
+        }
+      }
+      ctx.putImageData(frame, 0, 0);
+      raf = requestAnimationFrame(render);
+    };
+
+    const handlePlay = () => {
+      raf = requestAnimationFrame(render);
+    };
+
+    video.addEventListener('play', handlePlay);
+    // Force play if needed
+    video.play().catch(() => {
+      // Autoplay might be blocked, wait for any click
+      const resume = () => { video.play(); window.removeEventListener('click', resume); };
+      window.addEventListener('click', resume);
+    });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      video.removeEventListener('play', handlePlay);
+    };
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="welcome-avatar-container">
+      <div className="welcome-avatar-video-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <video 
+          ref={videoRef}
+          src="/assets/welcome_avatar.mp4"
+          autoPlay 
+          loop 
+          muted 
+          playsInline
+          style={{ display: 'none' }}
+        />
+        <canvas 
+          ref={canvasRef}
+          width={640} 
+          height={480}
+          className="welcome-avatar-video"
+        />
+        
+        {showBubble && (
+          <div className="welcome-avatar-bubble" onClick={() => setShowBubble(false)} style={{ cursor: 'pointer' }}>
+            Welcome to Silentvoice! 👋
+          </div>
+        )}
+        
+        <button 
+          className="welcome-avatar-close" 
+          style={{ top: 0, right: 0, opacity: 0.6, zIndex: 10 }} 
+          onClick={() => setVisible(false)}
+          title="Dismiss avatar"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ═══ MAIN APP ═══ */
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -177,6 +278,7 @@ export default function App() {
   return (
     <>
       {loading && <LoadingScreen onDone={() => setLoading(false)} />}
+      <WelcomeAvatar />
 
       <div style={{
         display: 'flex', flexDirection: 'column', minHeight: '100vh',
