@@ -88,7 +88,8 @@ def main():
         sys.executable, os.path.join(os.path.dirname(__file__), "render_preview_video.py"),
         "--input", final_pkl,
         "--out", final_mp4,
-        "--fps", "15"
+        "--fps", "15",
+        "--text", args.text
     ]
     try:
         subprocess.run(ren_cmd, check=True)

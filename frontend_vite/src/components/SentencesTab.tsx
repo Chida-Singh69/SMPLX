@@ -56,12 +56,7 @@ export function SentencesTab({ gender }: { gender: Gender }) {
             {filtered.map(s => <option key={s.pkl} value={s.pkl}>{s.text}</option>)}
           </select>
 
-          {pkl && (
-            <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(0,212,170,0.06)', border: '1px solid rgba(0,212,170,0.12)' }}>
-              <p className="text-xs font-medium mb-1" style={{ color: '#00d4aa' }}>Selected</p>
-              <p className="text-sm italic" style={{ color: 'rgba(255,255,255,0.75)' }}>"{selectedText}"</p>
-            </div>
-          )}
+
 
           <div className="flex items-center justify-between text-xs" style={{ color: 'rgba(255,255,255,0.20)' }}>
             <span>How2Sign Dataset</span>
@@ -82,9 +77,8 @@ export function SentencesTab({ gender }: { gender: Gender }) {
               <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.90)' }}>Result</span>
               <a href={videoUrl} download="sentence_asl.mp4" className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: 'rgba(0,212,170,0.10)', color: '#00d4aa', border: '1px solid rgba(0,212,170,0.15)' }}>⬇ Download</a>
             </div>
-            <div className="flex-1 p-6 flex flex-col gap-4">
-              <p className="text-xs italic" style={{ color: 'rgba(255,255,255,0.50)' }}>"{selectedText}"</p>
-              <video src={videoUrl} controls autoPlay className="w-full rounded-xl" />
+            <div className="flex-1 p-6 flex flex-col gap-4 items-center justify-center">
+              <video src={videoUrl} controls autoPlay className="w-full rounded-xl" style={{ maxHeight: '400px', objectFit: 'contain' }} />
             </div>
           </div>
         ) : (

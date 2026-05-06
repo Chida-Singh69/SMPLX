@@ -123,62 +123,16 @@ st.markdown('<p class="subheader">Advanced ASL Animation & 3D Pose Orchestration
 
 
 def render_video_with_live_caption(video_path: str, caption_text: str, height: int = 620):
-        """Render a local MP4 with a live caption line below the player."""
+        """Render a local MP4. Captions are now burned into the video by the server."""
         with open(video_path, "rb") as f:
                 video_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-        words = caption_text.split()
-        element_id = f"cap_{abs(hash(video_path + caption_text))}"
-        words_js = json.dumps(words)
-
         html = f"""
         <div style=\"display:flex; flex-direction:column; gap:12px;\">
-            <video id=\"{element_id}_video\" controls style=\"width:100%; border-radius:10px; background:#000;\">
+            <video controls style=\"width:100%; border-radius:10px; background:#000;\">
                 <source src=\"data:video/mp4;base64,{video_b64}\" type=\"video/mp4\" />
             </video>
-
-            <div id=\"{element_id}_caption\"
-                     style=\"font-size:22px; line-height:1.6; padding:20px; border-radius:16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); min-height:80px; text-align:center; backdrop-filter:blur(10px);\">
-            </div>
         </div>
-
-        <script>
-            const words = {words_js};
-            const video = document.getElementById("{element_id}_video");
-            const caption = document.getElementById("{element_id}_caption");
-
-            function renderCaption() {{
-                if (!words.length) {{
-                    caption.textContent = "";
-                    return;
-                }}
-
-                const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-                const ratio = Math.max(0, Math.min(1, video.currentTime / duration));
-                const activeIndex = Math.min(words.length - 1, Math.floor(ratio * words.length));
-
-                caption.innerHTML = words.map((w, i) => {{
-                    let color = "#7c879a";
-                    let weight = 500;
-
-                    if (i < activeIndex) {{
-                        color = "#0b7a4e";
-                        weight = 600;
-                    }} else if (i === activeIndex) {{
-                        color = "#c04600";
-                        weight = 800;
-                    }}
-
-                    return `<span style=\"color:${{color}}; font-weight:${{weight}}; transition:color 120ms linear;\">${{w}}</span>`;
-                }}).join(" ");
-            }}
-
-            video.addEventListener("loadedmetadata", renderCaption);
-            video.addEventListener("timeupdate", renderCaption);
-            video.addEventListener("seeked", renderCaption);
-            video.addEventListener("play", renderCaption);
-            renderCaption();
-        </script>
         """
 
         components.html(html, height=height, scrolling=False)

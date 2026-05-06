@@ -272,9 +272,13 @@ class SentenceToSMPLX:
 
         pil_img = Image.fromarray(frame)
         draw = ImageDraw.Draw(pil_img, "RGBA")
-        font = ImageFont.load_default()
+        try:
+            # Use a nice truetype font, sized up significantly
+            font = ImageFont.truetype("arial.ttf", 32)
+        except IOError:
+            font = ImageFont.load_default()
 
-        lines = self._wrap_text(subtitle_text)
+        lines = self._wrap_text(subtitle_text, max_chars=30)
         if not lines:
             return frame
 
@@ -285,16 +289,17 @@ class SentenceToSMPLX:
             line_widths.append(bbox[2] - bbox[0])
             line_heights.append(bbox[3] - bbox[1])
 
-        padding_x = 12
-        padding_y = 8
-        line_gap = 4
+        padding_x = 14
+        padding_y = 10
+        line_gap = 6
         text_block_h = sum(line_heights) + (len(lines) - 1) * line_gap
         box_w = max(line_widths) + (padding_x * 2)
         box_h = text_block_h + (padding_y * 2)
 
         img_w, img_h = pil_img.size
         x0 = max((img_w - box_w) // 2, 0)
-        y0 = max(img_h - box_h - 14, 0)
+        # Move subtitles higher by subtracting 60 so it sits right above the playbar
+        y0 = max(img_h - box_h - 60, 0)
         x1 = min(x0 + box_w, img_w)
         y1 = min(y0 + box_h, img_h)
 
