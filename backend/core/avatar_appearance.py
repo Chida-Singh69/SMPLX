@@ -2,7 +2,7 @@
 Avatar Appearance Module
 ========================
 Outfit, skin-tone, and face-asset definitions for SMPL-X avatars.
-Eyes / eyebrows / hair all load from pre-built GLB proxy meshes.
+Eyes / eyebrows load from pre-built GLB proxy meshes.
 """
 
 import os, numpy as np
@@ -25,10 +25,8 @@ except ImportError:
 _HERE   = os.path.dirname(os.path.abspath(__file__))
 _ASSETS = os.path.normpath(os.path.join(_HERE, '..', '..', 'assets'))
 
-_EYE_GLB       = os.path.join(_ASSETS, 'eyes',     'default_sphere.glb')
-_BROW_GLB      = os.path.join(_ASSETS, 'eyebrows', 'default_brow.glb')
-_HAIR_GLB      = os.path.join(_ASSETS, 'hair',     'default_hair.glb')   # neutral/female
-_HAIR_GLB_MALE = os.path.join(_ASSETS, 'hair',     'male_fringe.glb')    # male fringe
+_EYE_GLB  = os.path.join(_ASSETS, 'eyes',     'default_sphere.glb')
+_BROW_GLB = os.path.join(_ASSETS, 'eyebrows', 'default_brow.glb')
 
 
 # ── Color palettes ─────────────────────────────────────────────────────
@@ -50,12 +48,6 @@ EYEBROW_COLORS = {
     'brown': [0.18, 0.12, 0.08],
 }
 
-HAIR_COLORS = {
-    'black':  [0.03, 0.02, 0.02, 1.0],
-    'brown':  [0.12, 0.06, 0.03, 1.0],
-    'blonde': [0.72, 0.55, 0.25, 1.0],
-}
-
 SCLERA_COLOR = [0.95, 0.95, 0.94]
 
 OUTFIT_CATALOG = {
@@ -67,7 +59,7 @@ OUTFIT_CATALOG = {
     'full_sleeve_shirt': {
         'label': 'Full Sleeve Shirt',
         'color': [0.18, 0.10, 0.05, 1.0],
-        'offset': 0.008, 'laplacian': 12,  # more passes = smoother collar
+        'offset': 0.008, 'laplacian': 12,
     },
     'long_sleeve_vneck': {
         'label': 'Long Sleeve V-Neck',
@@ -131,9 +123,8 @@ def _compute_tshirt_mask(x, y, z):
 def _compute_full_sleeve_shirt_mask(x, y, z):
     valid_y = (y > -0.42) & (y < 0.18)
     # Cylindrical collar: XZ-plane circle only → clean round neckline
-    neck_cyl  = np.sqrt(x**2 + z**2)          # distance from vertical neck axis
-    neck_band = np.abs(y - 0.155)              # how close to collar Y level
-    # Exclude: inside collar cylinder AND near collar height
+    neck_cyl  = np.sqrt(x**2 + z**2)
+    neck_band = np.abs(y - 0.155)
     inside_collar = (neck_cyl < 0.068) & (neck_band < 0.055)
     neckline = ~inside_collar
     d_l = np.sqrt((x + 0.18)**2 + (y - 0.12)**2 + z**2)
@@ -177,7 +168,7 @@ class AvatarAppearance:
         skin_tone='medium',
         eye_color='brown',
         eyebrow_color='black',
-        hair_color='brown',
+        hair_color='brown',   # kept for API compat, unused
     ):
         self.gender = gender.lower()
         if outfit is None:
@@ -196,21 +187,9 @@ class AvatarAppearance:
         else:
             self.config['color'] = [0.247, 0.784, 1.0, 1.0]
 
-        self.skin_color   = SKIN_TONES[skin_tone]
-        self.eye_cfg      = EYE_COLORS[eye_color]
+        self.skin_color    = SKIN_TONES[skin_tone]
+        self.eye_cfg       = EYE_COLORS[eye_color]
         self.eyebrow_color = EYEBROW_COLORS[eyebrow_color]
-        self.hair_color   = HAIR_COLORS.get(hair_color, HAIR_COLORS['brown'])
-
-        # Per-gender hair defaults (bottom-of-hair offsets from old _compute_hair_mask)
-        # Male:   old mask threshold y > 0.310, eye_y ≈ 0.311 → bottom ≈ eye_y - 0.001
-        # Female: skullcap (old was full bob y > 0.200, but GLB is cap so keep near top)
-        if self.gender == 'male':
-            self.hair_color = HAIR_COLORS['black']
-            self._hair_scale  = 1.08   # slightly bigger to sit OUTSIDE skull
-            self._hair_bottom_from_eye = 0.00   # hair bottom at eye level
-        else:
-            self._hair_scale  = 1.10   # bigger for female volume + no clipping
-            self._hair_bottom_from_eye =  0.020   # cap bottom slightly above eyes
 
         # Runtime state
         self.body_indices  = None
@@ -219,15 +198,12 @@ class AvatarAppearance:
         self._leye_center  = None
         self._reye_center  = None
 
-        # Load gender-specific hair GLB
-        hair_path = _HAIR_GLB_MALE if self.gender == 'male' else _HAIR_GLB
+        # Preload GLB proxies
         self._eye_glb  = _load_glb(_EYE_GLB)
         self._brow_glb = _load_glb(_BROW_GLB)
-        self._hair_glb = _load_glb(hair_path)
 
         print(f"[Appearance] gender={self.gender} outfit={self.outfit_key} "
-              f"eye_glb={'ok' if self._eye_glb else 'MISSING'} "
-              f"hair_glb={'ok' if self._hair_glb else 'MISSING'}")
+              f"eye_glb={'ok' if self._eye_glb else 'MISSING'}")
 
     # ── Mask computation ───────────────────────────────────────────────
 
@@ -265,18 +241,6 @@ class AvatarAppearance:
             baseColorFactor=self.skin_color
         )
 
-    # ── GLB-based proxy placement ──────────────────────────────────────
-
-    @staticmethod
-    def _place_glb_on_skull(proto, skull_top, sink, scale=1.0):
-        """Clone bob GLB: align TOP (max-Y=crown) to skull_top."""
-        m = proto.copy()
-        m.apply_scale(scale)
-        crown_y = m.vertices[:, 1].max()          # crown is at local max-Y
-        offset   = skull_top - crown_y
-        m.apply_translation([0, offset, 0])
-        return m
-
     # ── Scene layers ───────────────────────────────────────────────────
 
     def build_scene_layers(self, mesh):
@@ -298,13 +262,13 @@ class AvatarAppearance:
         return result
 
     def build_face_layers(self, mesh):
-        """Eyes (vertex-coloured) + hair GLB proxy."""
+        """Eyes (vertex-coloured)."""
         if not PYRENDER_AVAILABLE: return []
         result = []
         verts   = mesh.vertices
         normals = mesh.vertex_normals
 
-        # ── Eyes (vertex-colour, same as before) ──────────────────────
+        # ── Eyes ──────────────────────────────────────────────────────
         for eye_idx, eye_ctr in [
             (self._leye_indices, self._leye_center),
             (self._reye_indices, self._reye_center),
@@ -334,31 +298,5 @@ class AvatarAppearance:
             sub = trimesh.Trimesh(vertices=lv, faces=lf,
                                   vertex_colors=colors, process=False)
             result.append(pyrender.Mesh.from_trimesh(sub, smooth=False))
-
-        # ── Hair — GLB hugs skull every frame ────────────────────────────
-        if self._hair_glb is not None and self._leye_indices is not None and len(self._leye_indices) > 0:
-            # X/Z anchor from live eyes
-            live_eye_center = verts[self._leye_indices].mean(axis=0)
-            # Skull top: fixed anatomical offset above eye centre
-            skull_top_offset = 0.130  # eye centre to skull crown (~13 cm)
-            skull_top_y = live_eye_center[1] + skull_top_offset
-            # Sink from anatomical mask thresholds
-            sink = (skull_top_offset - self._hair_bottom_from_eye) * 1.10
-            x_shift = -0.015
-
-            h = self._place_glb_on_skull(self._hair_glb, skull_top_y, sink=sink, scale=self._hair_scale)
-            h.apply_translation([live_eye_center[0] + x_shift, 0, live_eye_center[2] - 0.075])
-
-            # Smooth slightly
-            try: trimesh.smoothing.filter_laplacian(h, iterations=3)
-            except: pass
-
-            h_mat = pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=self.hair_color,
-                metallicFactor=0.0, roughnessFactor=0.85
-            )
-            result.append(pyrender.Mesh.from_trimesh(h, material=h_mat, smooth=True))
-        elif self._hair_glb is None:
-            print("[WARN] Hair GLB missing – skipping hair layer")
 
         return result

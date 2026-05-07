@@ -15,6 +15,7 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const timeoutRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const generateBtnRef = useRef<HTMLButtonElement>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -43,6 +44,10 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
       });
       if (!r.ok) throw new Error((await r.json()).error || 'Failed to extract transcript');
       setTranscriptData(await r.json()); setStatus('analyzed');
+      // Auto-scroll to Generate ASL button once transcript is ready
+      setTimeout(() => {
+        generateBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
     } catch (e: any) { setError(e.message); setStatus('error'); }
   };
 
@@ -304,6 +309,7 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
               )}
             </div>
             <button
+              ref={generateBtnRef}
               onClick={handleGenerate}
               disabled={status === 'generating'}
               className="btn-primary"

@@ -167,9 +167,9 @@ class WordToSMPLX:
             # Camera pose: 4x4 transformation matrix
             # Position for frontal standing view with full body and hands visible
             self.cam_pose = np.eye(4)
-            self.cam_pose[0, 3] = 0.0      # x: center
-            self.cam_pose[1, 3] = 0.2     # y: focus on upper body
-            self.cam_pose[2, 3] = 1     # z: closer zoom
+            self.cam_pose[0, 3] = 0.0   # x: center
+            self.cam_pose[1, 3] = 0.15  # y: match sentence tab
+            self.cam_pose[2, 3] = 1.7   # z: match sentence tab (wider framing)
             
             # Offscreen renderer: renders to images (not screen display)
             self.renderer = pyrender.OffscreenRenderer(
