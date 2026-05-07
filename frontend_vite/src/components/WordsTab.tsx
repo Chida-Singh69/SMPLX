@@ -4,7 +4,7 @@ import { Play, Loader2, X } from 'lucide-react';
 import { API, fetchWords } from '@/lib/api';
 import type { Gender } from '../App';
 
-export function WordsTab({ gender }: { gender: Gender }) {
+export function WordsTab({ gender, onActivity }: { gender: Gender, onActivity: (a: any) => void }) {
   const [words, setWords] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [current, setCurrent] = useState('');
@@ -23,7 +23,16 @@ export function WordsTab({ gender }: { gender: Gender }) {
         body: JSON.stringify({ words: selected, gender }),
       });
       if (!r.ok) throw new Error((await r.json()).error || 'Generation failed');
-      setVideoUrl(URL.createObjectURL(await r.blob())); setStatus('done');
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      setVideoUrl(url); 
+      setStatus('done');
+      onActivity({
+        action: 'Words Generated',
+        detail: selected.join(' → '),
+        icon: '✦',
+        vid: url
+      });
     } catch (e: any) { setError(e.message); setStatus('error'); }
   };
 

@@ -6,7 +6,7 @@ import LiteYouTubeEmbed from 'react-lite-youtube-embed';
 import 'react-lite-youtube-embed/dist/LiteYouTubeEmbed.css';
 import type { Gender } from '../App';
 
-export function YoutubeTab({ gender }: { gender: Gender }) {
+export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity: (a: any) => void }) {
   const [url, setUrl] = useState('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'analyzed' | 'generating' | 'done' | 'error'>('idle');
   const [errorMsg, setError] = useState('');
@@ -42,6 +42,12 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
     setPlaylist([]);
     setCurrentVideoIndex(0);
     setError('');
+    
+    onActivity({
+      action: 'YouTube Video',
+      detail: url.replace('https://', '').replace('www.', '').slice(0, 25) + '...',
+      icon: '🎬'
+    });
 
     try {
       const r = await fetch(`${API}/api/stream_youtube_chunks`, {
@@ -70,6 +76,15 @@ export function YoutubeTab({ gender }: { gender: Gender }) {
               if (data.status === 'chunk_ready') {
                 const fullUrl = `${API}${data.url}`;
                 setPlaylist(prev => [...prev, { url: fullUrl, text: data.text, start: data.start_time, end: data.end_time }]);
+                // Update history with the first video preview if not already set
+                if (playlist.length === 0) {
+                  onActivity({
+                    action: 'YouTube Video',
+                    detail: transcriptData.title || url.slice(0, 20),
+                    icon: '🎬',
+                    vid: fullUrl
+                  });
+                }
               } else if (data.status === 'done') {
                 setStatus('done');
               }

@@ -4,7 +4,7 @@ import { Play, Loader2 } from 'lucide-react';
 import { API, fetchSentences } from '@/lib/api';
 import type { Gender } from '../App';
 
-export function SentencesTab({ gender }: { gender: Gender }) {
+export function SentencesTab({ gender, onActivity }: { gender: Gender, onActivity: (a: any) => void }) {
   const [sentences, setSentences] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [pkl, setPkl] = useState('');
@@ -26,7 +26,15 @@ export function SentencesTab({ gender }: { gender: Gender }) {
       });
       if (!r.ok) throw new Error((await r.json()).error || 'Render failed');
       const data = await r.json();
-      setVideoUrl(`${API}${data.url}`); setStatus('done');
+      const fullUrl = `${API}${data.url}`;
+      setVideoUrl(fullUrl); 
+      setStatus('done');
+      onActivity({
+        action: 'Sentence Rendered',
+        detail: selectedText,
+        icon: '❝',
+        vid: fullUrl
+      });
     } catch (e: any) { setError(e.message); setStatus('error'); }
   };
 

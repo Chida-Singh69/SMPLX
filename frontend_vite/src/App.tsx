@@ -136,7 +136,7 @@ function LoadingScreen({ onDone }: { onDone: () => void }) {
   return (
     <div className={`loading-screen ${fade ? 'fade-out' : ''}`}>
       <div className="loading-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 96, height: 96, objectFit: 'contain', marginBottom: 4 }} />
+        <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 96, height: 'auto', maxHeight: 96, objectFit: 'contain', marginBottom: 4 }} />
         <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <p style={{ fontSize: 34, fontWeight: 800, color: '#ffffff', margin: '0 0 4px', letterSpacing: '-0.5px' }}>Silentvoice</p>
           <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)', margin: 0, letterSpacing: '0.15em', textTransform: 'uppercase', fontFamily: "'Outfit', sans-serif" }}>ASL Translation</p>
@@ -259,13 +259,36 @@ function WelcomeAvatar() {
   );
 }
 
+export interface Activity {
+  action: string;
+  detail: string;
+  time: string;
+  icon: string;
+  vid?: string;
+}
+
 /* ═══ MAIN APP ═══ */
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTab] = useState<Tab>('about');
   const [gender, setGender] = useState<Gender>('neutral');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [history, setHistory] = useState<Activity[]>(() => {
+    const saved = localStorage.getItem('smplx_history');
+    return saved ? JSON.parse(saved) : [];
+  });
   const scrollRef = useScrollReveal();
+
+  useEffect(() => {
+    localStorage.setItem('smplx_history', JSON.stringify(history));
+  }, [history]);
+
+  const addActivity = (item: Omit<Activity, 'time'>) => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const newActivity = { ...item, time: timeStr };
+    setHistory(prev => [newActivity, ...prev].slice(0, 8));
+  };
 
   useEffect(() => {
     if (theme === 'light') {
@@ -315,7 +338,7 @@ export default function App() {
           borderBottom: '1px solid rgba(255,255,255,0.06)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 46, height: 46, objectFit: 'contain' }} />
+            <img src="/logo.png" alt="Silentvoice Logo" style={{ width: 52, height: 'auto', maxHeight: 52, objectFit: 'contain' }} />
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <p style={{ fontWeight: 800, fontSize: 22, color: '#ffffff', margin: '0 0 1px', letterSpacing: '-0.5px' }}>Silentvoice</p>
               <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0 }}>ASL Animation Suite</p>
@@ -349,11 +372,11 @@ export default function App() {
 
         {/* ── Content ── */}
         <main ref={scrollRef} style={{ flex: 1, position: 'relative', zIndex: 1, padding: '24px 20px 110px' }}>
-          {tab === 'home' && <YoutubeTab gender={gender} />}
-          {tab === 'sentences' && <SentencesTab gender={gender} />}
-          {tab === 'words' && <WordsTab gender={gender} />}
-          {tab === 'about' && <AboutSection />}
-          {tab === 'user' && <UserSection />}
+          {tab === 'home' && <YoutubeTab gender={gender} onActivity={addActivity} />}
+          {tab === 'sentences' && <SentencesTab gender={gender} onActivity={addActivity} />}
+          {tab === 'words' && <WordsTab gender={gender} onActivity={addActivity} />}
+          {tab === 'about' && <AboutSection setTab={setTab} />}
+          {tab === 'user' && <UserSection history={history} />}
         </main>
 
         {/* ── Bottom Nav ── */}
@@ -397,7 +420,7 @@ export default function App() {
 }
 
 /* ═══ ABOUT SECTION — migam.ai/product inspired ═══ */
-function AboutSection() {
+function AboutSection({ setTab }: { setTab: (t: Tab) => void }) {
   const sectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -470,8 +493,8 @@ function AboutSection() {
             borderRadius: '2rem', filter: 'blur(20px)', zIndex: 0
           }} />
           <img
-            src="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80"
-            alt="Cyber tech network"
+            src="/assets/hero_asl_avatar.png"
+            alt="3D ASL Avatar"
             style={{
               width: '100%', height: 'auto', borderRadius: '1.5rem', position: 'relative', zIndex: 1,
               border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
@@ -537,8 +560,8 @@ function AboutSection() {
         <div className="animate-on-scroll" style={{ marginTop: 48, borderRadius: '1.5rem', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 10px 40px rgba(0,0,0,0.4)', position: 'relative', height: 280 }}>
           <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to top, rgba(5,5,5,0.8), transparent)' }} />
           <img
-            src="https://images.unsplash.com/photo-1633412802994-5c058f151b66?auto=format&fit=crop&w=1200&q=80"
-            alt="AI Rendering Process"
+            src="/assets/rendering_engine_mesh.png"
+            alt="AI Rendering Mesh"
             style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }}
           />
           <div style={{ position: 'absolute', bottom: 24, left: 32, zIndex: 2 }}>
@@ -548,24 +571,7 @@ function AboutSection() {
         </div>
       </div>
 
-      {/* ═══ STATS COUNTERS ═══ */}
-      <div className="animate-on-scroll" style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 96,
-      }}>
-        {[
-          { value: 'High', label: 'Translation Accuracy' },
-          { value: '30,000+', label: 'Sentences in Dataset' },
-          { value: 'multiple', label: 'Avatar Body Models' },
-          { value: 'up to 7s', label: 'Avg. Render Time' },
-        ].map((s, i) => (
-          <div key={s.label} className="dark-card" style={{
-            ...card, textAlign: 'center', padding: '36px 20px',
-          }}>
-            <p style={{ fontSize: 36, fontWeight: 800, margin: '0 0 8px', letterSpacing: '-1.5px', background: 'linear-gradient(135deg, #00d4aa, #00f5c8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{s.value}</p>
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 500 }}>{s.label}</p>
-          </div>
-        ))}
-      </div>
+
 
       {/* ═══ TECH STACK ═══ */}
       <div className="animate-on-scroll" style={{ marginBottom: 96 }}>
@@ -611,7 +617,7 @@ function AboutSection() {
       }}>
         <div style={{
           position: 'absolute', inset: 0, zIndex: 0,
-          backgroundImage: 'url("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80")',
+          backgroundImage: 'url("/assets/asl_cta_background.png")',
           backgroundSize: 'cover', backgroundPosition: 'center',
           opacity: 0.35, filter: 'grayscale(50%) contrast(1.2)'
         }} />
@@ -627,12 +633,13 @@ function AboutSection() {
             Switch to the Video tab to get started — paste a YouTube URL and watch your first ASL animation come to life.
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <span className="btn-primary" style={{ padding: '14px 36px', fontSize: 15, borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'default', fontWeight: 700 }}>
+            <button 
+              className="btn-primary" 
+              onClick={() => setTab('home')}
+              style={{ padding: '14px 36px', fontSize: 15, borderRadius: 12, display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 700, border: 'none' }}
+            >
               ▶ Try It Now
-            </span>
-            <span className="btn-ghost" style={{ padding: '14px 28px', fontSize: 15, borderRadius: 12, fontFamily: "'Outfit', sans-serif", fontWeight: 600 }}>
-              View Documentation
-            </span>
+            </button>
           </div>
         </div>
       </div>
@@ -641,76 +648,140 @@ function AboutSection() {
 }
 
 /* ═══ USER / PROFILE SECTION ═══ */
-function UserSection() {
+function UserSection({ history }: { history: Activity[] }) {
   const card: React.CSSProperties = {
     background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
     borderRadius: '1.25rem', padding: '28px',
     boxShadow: '0 2px 24px rgba(0,0,0,0.4)',
   };
+  
   const stats = [
-    { label: 'Animations Generated', value: '24' },
-    { label: 'Words Translated', value: '312' },
-    { label: 'Videos Processed', value: '7' },
-    { label: 'Hours Saved', value: '~3h' },
+    { label: 'Total Jobs', value: history.length.toString() },
+    { label: 'Tokens Processed', value: (history.length * 48).toString() },
   ];
+
+
+
   return (
-    <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 20 }}>
+    <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      
+      {/* Profile Header */}
+      <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 24, position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', top: -20, right: -20, width: 120, height: 120, borderRadius: '50%', background: 'rgba(0,212,170,0.05)', filter: 'blur(30px)' }} />
+        
         <div style={{
-          width: 70, height: 70, borderRadius: '50%', flexShrink: 0,
-          background: 'rgba(255,255,255,0.1)',
+          width: 90, height: 90, borderRadius: 24, flexShrink: 0,
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))',
+          border: '1px solid rgba(255,255,255,0.1)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 36,
         }}>
-          <img src="/logo.png" alt="User Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+          👤
         </div>
+        
         <div style={{ flex: 1 }}>
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'rgba(255,255,255,0.92)', margin: '0 0 4px' }}>Bhoomika</h2>
-          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)', margin: '0 0 10px' }}>bhoomika@smplx.dev · How2Sign Researcher</p>
-          <div style={{ display: 'flex', gap: 7 }}>
-            {['Researcher', 'ASL Enthusiast', 'How2Sign'].map(tag => (
-              <span key={tag} className="dark-tag" style={{ fontSize: 11, padding: '3px 11px', borderRadius: 20 }}>{tag}</span>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+            <h2 style={{ fontSize: 24, fontWeight: 800, color: '#ffffff', margin: 0 }}>Guest User</h2>
+            <span style={{ fontSize: 10, background: 'rgba(0,212,170,0.15)', color: '#00d4aa', padding: '2px 8px', borderRadius: 12, fontWeight: 700, textTransform: 'uppercase' }}>Pro Plan</span>
+          </div>
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', margin: '0 0 16px' }}>user_82931 · sign-language-pro@smplx.ai</p>
+          
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn-ghost" style={{ padding: '6px 16px', fontSize: 12, borderRadius: 20 }}>Edit Profile</button>
+            <button className="btn-ghost" style={{ padding: '6px 16px', fontSize: 12, borderRadius: 20 }}>Settings</button>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'rgba(255,255,255,0.40)' }}>
-          <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ade80' }} /> Online
-        </div>
+        
+
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        {stats.map(s => (
-          <div key={s.label} style={{ ...card, padding: '18px 14px', textAlign: 'center' }}>
-            <p style={{ fontSize: 26, fontWeight: 800, color: '#00d4aa', margin: '0 0 4px' }}>{s.value}</p>
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', margin: 0, lineHeight: 1.4 }}>{s.label}</p>
+
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* Recent Activity */}
+        <div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#ffffff', margin: 0 }}>Recent Activity</h3>
+            <span style={{ fontSize: 12, color: '#00d4aa', cursor: 'pointer' }}>View All</span>
           </div>
-        ))}
-      </div>
-
-      <div style={card}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: 'rgba(255,255,255,0.90)', marginBottom: 14 }}>Recent Activity</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {[
-            { action: 'Generated animation', detail: '"Hello World" · Word Mode', time: '2 min ago', dot: '#00d4aa' },
-            { action: 'Rendered sentence', detail: 'How2Sign #AS7382', time: '1 hr ago', dot: '#00b894' },
-            { action: 'YouTube video', detail: 'TED Talk – Sign Language', time: 'Yesterday', dot: '#009688' },
-          ].map((a, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.03)' }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', background: a.dot, flexShrink: 0 }} />
-              <div style={{ flex: 1 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>{a.action}</span>
-                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}> — {a.detail}</span>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {history.length === 0 ? (
+              <div style={{ padding: '30px', textAlign: 'center', opacity: 0.3, border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 16 }}>
+                <p style={{ fontSize: 13 }}>No recent activity yet.<br />Try generating an animation!</p>
               </div>
-              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.20)', whiteSpace: 'nowrap' }}>{a.time}</span>
-            </div>
-          ))}
+            ) : (
+              history.map((a, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px', borderRadius: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', transition: 'all 0.2s' }}>
+                  <div style={{ 
+                    width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.04)', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 
+                  }}>
+                    {a.icon}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 13.5, fontWeight: 600, color: 'rgba(255,255,255,0.9)', margin: 0 }}>{a.action}</p>
+                    <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.35)', margin: 0 }}>{a.detail}</p>
+                  </div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                    {a.vid && (
+                      <div style={{ 
+                        width: 64, height: 40, borderRadius: 8, overflow: 'hidden', 
+                        border: '1px solid rgba(0,212,170,0.2)', background: '#000',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)', position: 'relative'
+                      }}>
+                        <video 
+                          src={a.vid} 
+                          autoPlay 
+                          loop 
+                          muted 
+                          playsInline 
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.8 }} 
+                        />
+                        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(rgba(0,212,170,0.1), transparent)', pointerEvents: 'none' }} />
+                      </div>
+                    )}
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.20)', fontWeight: 500 }}>{a.time}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Account Management */}
+        <div style={{ ...card, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.02)' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#ef4444', marginBottom: 8 }}>Danger Zone</h3>
+          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>Manage your account session and local data.</p>
+          
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button 
+              className="btn-ghost" 
+              style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)', padding: '10px 24px', borderRadius: 12 }}
+              onClick={() => {
+                localStorage.removeItem('smplx_history');
+                window.location.reload();
+              }}
+            >
+              Sign Out
+            </button>
+            <button 
+              className="btn-ghost" 
+              style={{ color: 'rgba(255,255,255,0.3)', padding: '10px 24px', borderRadius: 12 }}
+              onClick={() => {
+                if (confirm('Clear all translation history?')) {
+                  localStorage.removeItem('smplx_history');
+                  window.location.reload();
+                }
+              }}
+            >
+              Clear Cache
+            </button>
+          </div>
         </div>
       </div>
 
-      <div style={{ ...card, background: 'rgba(0,212,170,0.04)', borderColor: 'rgba(0,212,170,0.10)' }}>
-        <p style={{ fontSize: 12.5, color: 'rgba(0,212,170,0.60)', margin: 0, textAlign: 'center' }}>
-          Diffusion Model · Integrations · API Keys — <em>coming soon</em>
-        </p>
-      </div>
     </div>
   );
 }
