@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 import { Play, Hand, Loader2, ChevronRight } from 'lucide-react';
 import { API } from '@/lib/api';
@@ -13,6 +13,16 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
   const [transcriptData, setTranscriptData] = useState<any>(null);
   const [playlist, setPlaylist] = useState<{url: string, text: string}[]>([]);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
+  const timeoutRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, []);
 
   // Extract YouTube video ID from URL
   const getYoutubeId = (u: string) => {
@@ -43,16 +53,35 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
     setCurrentVideoIndex(0);
     setError('');
     
+    // Abort any existing generation
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     onActivity({
       action: 'YouTube Video',
       detail: url.replace('https://', '').replace('www.', '').slice(0, 25) + '...',
       icon: '🎬'
     });
 
+    // Start 10s watchdog timer
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setStatus(prev => {
+        if (prev === 'generating') {
+          setError('Generation timed out (10s) - Server not responding');
+          return 'analyzed';
+        }
+        return prev;
+      });
+    }, 10000);
+
     try {
       const r = await fetch(`${API}/api/stream_youtube_chunks`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chunks: transcriptData.chunks, gender }),
+        signal: abortControllerRef.current.signal
       });
       if (!r.ok) throw new Error('Generation failed');
       if (!r.body) throw new Error('Streaming not supported');
@@ -71,6 +100,13 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
           if (line.startsWith('data: ')) {
             const dataStr = line.replace('data: ', '').trim();
             if (!dataStr) continue;
+            
+            // Clear watchdog on first response
+            if (timeoutRef.current) {
+              clearTimeout(timeoutRef.current);
+              timeoutRef.current = null;
+            }
+
             try {
               const data = JSON.parse(dataStr);
               if (data.status === 'chunk_ready') {
@@ -92,7 +128,19 @@ export function YoutubeTab({ gender, onActivity }: { gender: Gender, onActivity:
           }
         }
       }
-    } catch (e: any) { setError(e.message); setStatus('error'); }
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        console.log('Generation aborted');
+        return;
+      }
+      setError(e.message);
+      setStatus('error');
+    } finally {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    }
   };
 
   const card: React.CSSProperties = {
