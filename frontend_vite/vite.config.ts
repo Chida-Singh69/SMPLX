@@ -12,6 +12,10 @@ export default defineConfig({
     },
   },
   server: {
+    host: '127.0.0.1',
+    hmr: {
+      host: 'localhost',
+    },
     proxy: {
       '/api':                    { target: 'http://127.0.0.1:5000', changeOrigin: true },
       '/asl_stream':             { target: 'http://127.0.0.1:5000', changeOrigin: true },

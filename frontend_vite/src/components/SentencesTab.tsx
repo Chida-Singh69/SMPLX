@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
+// import { Button } from '@/components/ui/button';
 import { Play, Loader2 } from 'lucide-react';
 import { API, fetchSentences } from '@/lib/api';
 import type { Gender } from '../App';
@@ -11,6 +11,8 @@ export function SentencesTab({ gender }: { gender: Gender }) {
   const [status, setStatus] = useState<'idle' | 'rendering' | 'done' | 'error'>('idle');
   const [videoUrl, setVideoUrl] = useState('');
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   useEffect(() => { fetchSentences().then(setSentences).catch(() => setError('Could not load sentences from API')); }, []);
 
@@ -46,17 +48,29 @@ export function SentencesTab({ gender }: { gender: Gender }) {
           {error && <p className="text-xs rounded-lg px-3 py-2 mb-4" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.15)' }}>{error}</p>}
 
           <input type="text" placeholder="Search sentences…" value={search}
-            onChange={e => { setSearch(e.target.value); setPkl(''); }}
+            onChange={e => { setSearch(e.target.value); setPkl(''); setPage(1); }}
             className="dark-input w-full text-sm px-4 py-2.5 mb-3"
           />
 
-          <select value={pkl} onChange={e => setPkl(e.target.value)}
-            className="dark-select w-full text-sm px-4 py-2.5 mb-4">
-            <option value="" disabled>— select a sentence —</option>
-            {filtered.map(s => <option key={s.pkl} value={s.pkl}>{s.text}</option>)}
-          </select>
+          <div className="flex justify-between items-center mb-2 px-1">
+            <button disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed">Prev</button>
+            <span className="text-xs text-white/40">Page {page} of {Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))}</span>
+            <button disabled={page >= Math.ceil(filtered.length / PAGE_SIZE)} onClick={() => setPage(p => p + 1)} className="text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed">Next</button>
+          </div>
 
-
+          <div className="flex flex-col gap-1.5 mb-4 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
+            {filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(s => (
+              <div 
+                key={s.pkl} 
+                onClick={() => setPkl(s.pkl)}
+                className={`text-sm px-3 py-2 rounded-lg cursor-pointer transition-all ${pkl === s.pkl ? 'bg-[#00d4aa]/20 border border-[#00d4aa]/40 text-white' : 'bg-white/5 border border-transparent text-white/70 hover:bg-white/10 hover:text-white'}`}
+                style={{ wordWrap: 'break-word', whiteSpace: 'normal', lineHeight: 1.4 }}
+              >
+                {s.text}
+              </div>
+            ))}
+            {filtered.length === 0 && <div className="text-xs text-white/30 text-center py-4">No sentences found.</div>}
+          </div>
 
           <div className="flex items-center justify-between text-xs" style={{ color: 'rgba(255,255,255,0.20)' }}>
             <span>How2Sign Dataset</span>
