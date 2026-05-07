@@ -67,6 +67,56 @@ os.makedirs(output_dir, exist_ok=True)
 text_cache_dir = os.path.join(output_dir, "text_cache")
 os.makedirs(text_cache_dir, exist_ok=True)
 
+# ── MVP Demo Normaliser ─────────────────────────────────────────────────────
+_MVP_ROOT     = os.path.normpath(os.path.join(current_dir, '..', '..', 'data', 'mvp'))
+_MVP_MAPPING  = os.path.join(_MVP_ROOT, 'mvp_demo_mapping.json')
+_demo_entries = []   # [(text_lower, abs_video_path, section_id, section_title)]
+
+def _load_demo_normaliser():
+    """Load pre-rendered section video paths + demo sentences at startup."""
+    global _demo_entries
+    if not os.path.exists(_MVP_MAPPING):
+        return
+    with open(_MVP_MAPPING) as f:
+        mapping = json.load(f)
+    for sec in mapping.get('sections', []):
+        videos_abs = {
+            g: os.path.normpath(os.path.join(current_dir, '..', '..', p))
+            for g, p in sec.get('videos', {}).items()
+        }
+        for s in sec['sentences']:
+            _demo_entries.append((
+                s['text'].lower().strip(),
+                videos_abs,
+                sec['id'],
+                sec['title'],
+            ))
+    print(f"[MVP] Demo normaliser: {len(_demo_entries)} sentences loaded")
+
+_load_demo_normaliser()
+
+def snap_to_demo(text: str, gender: str = 'neutral', threshold: float = 0.82):
+    """Fuzzy-match text against demo sentences (gender-aware).
+    Returns (abs_video_path, section_id, title) or None.
+    """
+    if not _demo_entries:
+        return None
+    import difflib
+    q = text.lower().strip()
+    best_r, best_hit = 0.0, None
+    for sent, videos_abs, sid, stitle in _demo_entries:
+        r = difflib.SequenceMatcher(None, q, sent).ratio()
+        if r > best_r:
+            best_r, best_hit = r, (videos_abs, sid, stitle)
+    if best_r >= threshold and best_hit:
+        videos_abs, sid, stitle = best_hit
+        vid_path = videos_abs.get(gender) or videos_abs.get('neutral')
+        if vid_path and os.path.exists(vid_path):
+            print(f"[MVP] Demo snap (sim={best_r:.3f}) -> section {sid} [{gender}]: {stitle}")
+            return vid_path, sid, stitle
+    return None
+
+
 with open(mapping_path, "r") as f:
     gloss_map = json.load(f)
 
@@ -453,9 +503,15 @@ def create_word_mapping(transcript_list, dataset_words):
 
 # --- API Endpoints (Core) ---
 
+@app.route('/mvp/<path:filename>')
+def serve_mvp(filename):
+    """Serve pre-rendered MVP demo section videos."""
+    return send_from_directory(_MVP_ROOT, filename)
+
 @app.route('/')
 def home():
     return jsonify({"status": "ok", "message": "SMPL-X ASL API running. Use the Vite frontend on port 5173."})
+
 
 @app.route('/api/available_words')
 def available_words():
@@ -589,6 +645,14 @@ def render_text_mp4():
             if max_frames <= 0:
                 return jsonify({'error': 'max_frames must be positive or null'}), 400
 
+        # MVP demo short-circuit: serve pre-rendered section video instantly
+        if use_cache:
+            demo = snap_to_demo(text, gender=gender)
+            if demo:
+                vid_path, sid, stitle = demo
+                return send_file(vid_path, mimetype='video/mp4',
+                                 download_name=f'silentvoice_section{sid}.mp4')
+
         # Deterministic cache key (MP4 response)
         key_material = f"v2_mp4|{gender}|{fps}|{max_frames}|{text.lower()}".encode('utf-8')
         key = hashlib.sha1(key_material).hexdigest()[:16]
@@ -693,6 +757,22 @@ def render_text_json():
 
         if candidate_k < 1 or candidate_k > 25:
             return jsonify({'error': 'candidate_k must be in 1..25'}), 400
+
+        # MVP demo short-circuit: return pre-rendered section video URL instantly
+        if use_cache:
+            demo = snap_to_demo(text, gender=gender)
+            if demo:
+                vid_path, sid, stitle = demo
+                vid_name = os.path.basename(vid_path)
+                return jsonify({
+                    'status': 'success',
+                    'strategy': 'mvp_demo',
+                    'section_id': sid,
+                    'section_title': stitle,
+                    'video_url': f'/mvp/{vid_name}',
+                    'confidence': 1.0,
+                    'matches': [],
+                })
 
         key_material = f"v2_mp4|{gender}|{fps}|{max_frames}|{use_vae}|{text.lower()}".encode('utf-8')
         key = hashlib.sha1(key_material).hexdigest()[:16]

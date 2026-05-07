@@ -1,0 +1,64 @@
+{
+  "sections": [
+    {
+      "id": 1,
+      "title": "What Your Body Is Made Of",
+      "videos": {
+        "neutral": "data/mvp/section1_body_elements_neutral.mp4",
+        "male":    "data/mvp/section1_body_elements_male.mp4",
+        "female":  "data/mvp/section1_body_elements_female.mp4"
+      },
+      "sentences": [
+        {"pkl": "0CAt2QlIcco_0-8-rgb_front.pkl", "text": "To really get people to really pay attention to your presentation, bring up themselves."},
+        {"pkl": "0CAt2QlIcco_1-8-rgb_front.pkl", "text": "Everybody likes it when they talk about themselves."},
+        {"pkl": "0CAt2QlIcco_3-8-rgb_front.pkl", "text": "Hey, do you want to know what you're made out of?"},
+        {"pkl": "0CAt2QlIcco_4-8-rgb_front.pkl", "text": "You're made out of six elements, per say, that are from the table of elements, the periodic table that is."},
+        {"pkl": "0CAt2QlIcco_5-8-rgb_front.pkl", "text": "Did you know that there is oxygen in your body?"},
+        {"pkl": "0CAt2QlIcco_6-8-rgb_front.pkl", "text": "Did you know that you have carbon, hydrogen, nitrogen, calcium and phosphorous?"},
+        {"pkl": "0CAt2QlIcco_8-8-rgb_front.pkl", "text": "Did you know that?"},
+        {"pkl": "0CAt2QlIcco_9-8-rgb_front.pkl", "text": "So if you point that out to people and show them what your all made out of, it's quite a interesting spectrum and it makes you so human, it really does."}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Energy & Nutrition",
+      "videos": {
+        "neutral": "data/mvp/section2_energy_nutrition_neutral.mp4",
+        "male":    "data/mvp/section2_energy_nutrition_male.mp4",
+        "female":  "data/mvp/section2_energy_nutrition_female.mp4"
+      },
+      "sentences": [
+        {"pkl": "1EYhtLj97b8_1-5-rgb_front.pkl", "text": "We talked about protein, carbohydrates and fats being the main energy source that are main nutrients for energy metabolism."},
+        {"pkl": "1EYhtLj97b8_2-5-rgb_front.pkl", "text": "We talked about the supporting nutrients of the vitamins and minerals that help support to metabolize the protein, carbohydrates and fats for energy."},
+        {"pkl": "1EYhtLj97b8_3-5-rgb_front.pkl", "text": "We also talked about some of the sources, the food guide pyramid and getting a variety of foods in our food guide pyramid."},
+        {"pkl": "1EYhtLj97b8_4-5-rgb_front.pkl", "text": "We will give you all the nutrients that you need for that energy metabolism, we talked about how you can determine the amounts that you need of all of those nutrients."},
+        {"pkl": "1EYhtLj97b8_5-5-rgb_front.pkl", "text": "We touched on supplements and we talked about the benefits of getting a proper diet for your energy metabolism."},
+        {"pkl": "dcN7W0lxTpE_0-8-rgb_front.pkl", "text": "I'd like to talk another aspect of a healthy diet."},
+        {"pkl": "dcN7W0lxTpE_3-8-rgb_front.pkl", "text": "The benefits of raw food and the benefits of cooked food."},
+        {"pkl": "dcN7W0lxTpE_4-8-rgb_front.pkl", "text": "Like other aspects of nutrition we're looking for balance here."}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "The Importance of Balance",
+      "videos": {
+        "neutral": "data/mvp/section3_raw_cooked_neutral.mp4",
+        "male":    "data/mvp/section3_raw_cooked_male.mp4",
+        "female":  "data/mvp/section3_raw_cooked_female.mp4"
+      },
+      "sentences": [
+        {"pkl": "dcN7W0lxTpE_5-8-rgb_front.pkl",  "text": "And it's important to get raw food in the diet for the live, I should say the active enzymes in there."},
+        {"pkl": "dcN7W0lxTpE_6-8-rgb_front.pkl",  "text": "Enzymes are considered the life force of foods."},
+        {"pkl": "dcN7W0lxTpE_7-8-rgb_front.pkl",  "text": "So if you put a raw food, like a raw potato in the ground it will grow into a plant."},
+        {"pkl": "dcN7W0lxTpE_8-8-rgb_front.pkl",  "text": "If you put a cooked potato in the ground it'll just decay."},
+        {"pkl": "dcN7W0lxTpE_9-8-rgb_front.pkl",  "text": "So that's an example of the life force in raw foods."},
+        {"pkl": "dcN7W0lxTpE_15-8-rgb_front.pkl", "text": "So raw foods of course we commonly think of are vegetables and fruits."},
+        {"pkl": "dcN7W0lxTpE_37-8-rgb_front.pkl", "text": "Some of the advantages of cooked foods."},
+        {"pkl": "dcN7W0lxTpE_39-8-rgb_front.pkl", "text": "Actually cooking makes some of the nutrients more available to the body."},
+        {"pkl": "dcN7W0lxTpE_40-8-rgb_front.pkl", "text": "As in the case of carrots."},
+        {"pkl": "dcN7W0lxTpE_48-8-rgb_front.pkl", "text": "So, again, we need a nice balance of raw and cooked foods in the diet."},
+        {"pkl": "dcN7W0lxTpE_13-8-rgb_front.pkl", "text": "I think we need more of the balance."}
+      ]
+    }
+  ]
+}
