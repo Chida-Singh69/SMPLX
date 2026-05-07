@@ -33,6 +33,7 @@ pip-wheel-metadata/
 # Node / Frontend (Vite)
 # -------------------------
 frontend_vite/node_modules/
+frontend_vite/package-lock.json
 frontend_vite/dist/
 frontend_vite/.env.local
 frontend_vite/.env.*.local
