@@ -32,7 +32,7 @@ class SentenceToSMPLX:
     Renders SMPL-X animations from sentence-level pose data.
     Similar to WordToSMPLX but optimized for longer sequences.
     """
-    def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None):
+    def __init__(self, model_path="models", gender='neutral', viewport_width=640, viewport_height=480, device=None, outfit=None, skin_tone='medium'):
         # Device setup - use CPU to avoid CUDA compatibility errors
         if device is None:
             self.device = torch.device('cpu')  # Force CPU to avoid CUDA compatibility errors
