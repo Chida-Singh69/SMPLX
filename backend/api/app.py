@@ -41,7 +41,17 @@ except ImportError:
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 if _cors_available:
-    CORS(app)
+    _allowed_origins = [
+        'https://www.youtube.com',
+        'https://m.youtube.com',
+    ]
+    CORS(
+        app,
+        resources={r"/*": {"origins": _allowed_origins}},
+        methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+        max_age=86400,
+    )
 
 # --- Setup paths and load resources once ---
 current_dir = os.path.dirname(os.path.abspath(__file__))

@@ -1,0 +1,63 @@
+body {
+  width: 250px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #050505;
+  color: #fff;
+  margin: 0;
+  padding: 16px;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+h2 {
+  color: #00d4aa;
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+select {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(0, 212, 170, 0.3);
+  padding: 6px;
+  border-radius: 4px;
+}
+
+button {
+  background: linear-gradient(135deg, #00d4aa, #00b894);
+  color: #000;
+  border: none;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  margin-top: 8px;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.button-row button {
+  flex: 1;
+}

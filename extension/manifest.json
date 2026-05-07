@@ -1,16 +1,32 @@
 {
   "manifest_version": 3,
-  "name": "SMPL-X ASL Animator",
-  "version": "1.0",
-  "description": "Translate web text to ASL animations using SMPL-X.",
-  "permissions": ["activeTab", "scripting"],
+  "name": "Silentvoice — ASL for YouTube",
+  "version": "1.0.0",
+  "description": "Real-time ASL sign language overlay for YouTube videos powered by SMPL-X.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["http://127.0.0.1:5000/*"],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "content_scripts": [
     {
+      "matches": ["*://www.youtube.com/watch*"],
       "js": ["content.js"],
-      "matches": ["<all_urls>"]
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
 }
