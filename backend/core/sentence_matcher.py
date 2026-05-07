@@ -179,6 +179,15 @@ class SentenceMatcher:
         self.index.add(self.embeddings)
         
         print(f"  [OK] Index built with {self.index.ntotal} sentences")
+        
+        # Warmup: do a dummy encode so first real call isn't slow/crashy
+        print("  Warming up encoder...", flush=True)
+        try:
+            _warmup = self.model.encode(["hello"], device='cpu')
+            print(f"  [OK] Encoder warm ({_warmup.shape})", flush=True)
+        except Exception as e:
+            print(f"  [ERROR] Encoder warmup failed: {e}", flush=True)
+        
         self._initialized = True
     
     def search(
@@ -204,12 +213,16 @@ class SentenceMatcher:
             self._build_index()
         
         # Encode query
+        print(f"  [search] encoding query...", flush=True)
         query_embedding = self.model.encode([query.lower().strip()], device='cpu')  # Force CPU
+        print(f"  [search] normalizing...", flush=True)
         faiss.normalize_L2(query_embedding)
         
         # Search (bi-encoder)
         initial_k = int(max(top_k, rerank_k if rerank else top_k))
+        print(f"  [search] FAISS search k={initial_k}...", flush=True)
         distances, indices = self.index.search(query_embedding, initial_k)
+        print(f"  [search] done", flush=True)
         
         # Format results
         results = []

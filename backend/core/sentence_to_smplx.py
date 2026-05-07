@@ -13,7 +13,6 @@ import io
 
 from backend.core.avatar_appearance import (
     AvatarAppearance,
-    GENDER_DEFAULT_OUTFIT,
     OUTFIT_CATALOG,
     SKIN_TONES,
     create_proxy_mesh,
@@ -39,7 +38,7 @@ class SentenceToSMPLX:
         else:
             self.device = torch.device(device)
         
-        print(f"[INFO] Using device: {self.device}")
+        print(f"[INFO] Using device: {self.device} for SentenceToSMPLX with gender: {gender}")
         
         # Locate SMPL-X files (support either models/smplx/*.npz or models/smplx/smplx/*.npz)
         primary_root = model_path  # expected: models
@@ -88,10 +87,7 @@ class SentenceToSMPLX:
         self.viewport_height = viewport_height
         
         # --- Avatar Appearance ---
-        # Resolve outfit: use explicit value, or fall back to gender default
-        if outfit is None:
-            outfit = GENDER_DEFAULT_OUTFIT.get(gender.lower(), 'tshirt')
-        self.appearance = AvatarAppearance(outfit=outfit, skin_tone=skin_tone)
+        self.appearance = AvatarAppearance(gender=gender, outfit=outfit, skin_tone=skin_tone)
         
         try:
             with torch.no_grad():
@@ -101,7 +97,11 @@ class SentenceToSMPLX:
                     return_verts=True
                 )
                 v = neutral_output.vertices[0].cpu().numpy()
-                self.appearance.compute_masks(v)
+                # Pass skinning weights for accurate eye detection
+                lbs_weights = None
+                if hasattr(self.smplx_model, 'lbs_weights'):
+                    lbs_weights = self.smplx_model.lbs_weights.cpu().numpy()
+                self.appearance.compute_masks(v, skinning_weights=lbs_weights)
         except Exception as e:
             print(f"Warning: Failed to compute appearance masks: {e}")
         
@@ -507,18 +507,29 @@ class SentenceToSMPLX:
             pyrender_mesh = pyrender.Mesh.from_trimesh(mesh, material=skin_material)
             
             # Create scene and add components
-            scene = pyrender.Scene(bg_color=[0.0, 0.0, 0.0, 1.0])  # Black background
+            # Use dark grey background so black eyebrows are visible.
+            scene = pyrender.Scene(bg_color=[0.05, 0.05, 0.05, 1.0]) 
             scene.add(pyrender_mesh)
             
             # --- GARMENT LAYERS (outfit-dependent) ---
             for garment_mesh, garment_mat in self.appearance.build_scene_layers(mesh):
                 scene.add(pyrender.Mesh.from_trimesh(garment_mesh, material=garment_mat))
 
+            # --- FACIAL FEATURES (eyes, eyebrows) ---
+            for face_pyrmesh in self.appearance.build_face_layers(mesh):
+                scene.add(face_pyrmesh)
+
             scene.add(self.camera, pose=self.cam_pose)
             scene.add(self.light, pose=self.cam_pose)
             
             # Render to offscreen buffer
             color, depth = self.renderer.render(scene)
+            
+            # EXPLICIT CLEANUP to prevent cyclic GC on random threads
+            scene.clear()
+            del pyrender_mesh
+            del scene
+            del skin_material
             
             # Return RGB image (discard alpha channel if present)
             if color.shape[2] == 4:
