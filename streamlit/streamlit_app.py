@@ -143,6 +143,19 @@ FLASK_API_URL = "http://localhost:5000"  # Flask backend URL
 st.sidebar.markdown("---")
 global_gender = st.sidebar.selectbox("Avatar Gender", ["NEUTRAL", "MALE", "FEMALE"], index=0).lower()
 
+# Outfit selector — defaults are gender-aware
+_gender_outfit_defaults = {'neutral': 'tshirt', 'male': 'full_sleeve_shirt', 'female': 'long_sleeve_vneck'}
+_outfit_options = ['tshirt', 'full_sleeve_shirt', 'long_sleeve_vneck']
+_outfit_labels = {'tshirt': 'T-Shirt (Blue)', 'full_sleeve_shirt': 'Full Sleeve Shirt (Dark Brown)', 'long_sleeve_vneck': 'Long Sleeve V-Neck (Dark Pink)'}
+_default_outfit = _gender_outfit_defaults.get(global_gender, 'tshirt')
+global_outfit = st.sidebar.selectbox(
+    "Avatar Outfit",
+    _outfit_options,
+    index=_outfit_options.index(_default_outfit),
+    format_func=lambda x: _outfit_labels.get(x, x),
+    help="Choose the avatar's clothing style"
+)
+
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🧠 AI Model Settings")
 api_host = st.sidebar.text_input("Backend API Host", value="http://localhost:5000")
@@ -498,15 +511,17 @@ with tab3:
                     device_label = "GPU (CUDA)" if device == 'cuda' else "CPU"
                     with st.spinner(f"Generating animation on {device_label}... {'Full sequence' if render_full else 'Preview (first ~10 seconds)'}"):
                         try:
-                            if 'animator' not in st.session_state or st.session_state.get('animator_gender') != global_gender:
-                                with st.spinner(f"Loading '{global_gender}' SMPL-X model for animation engine..."):
-                                    from sentence_to_smplx import SentenceToSMPLX
+                            _anim_key = f"{global_gender}_{global_outfit}"
+                            if 'animator' not in st.session_state or st.session_state.get('animator_key') != _anim_key:
+                                with st.spinner(f"Loading '{global_gender}' SMPL-X model ({global_outfit})..."):
+                                    from backend.core.sentence_to_smplx import SentenceToSMPLX
                                     st.session_state.animator = SentenceToSMPLX(
                                         model_path="models", 
-                                        device='cpu', # CPU avoids WebGL context conflict
-                                        gender=global_gender
+                                        device='cpu',
+                                        gender=global_gender,
+                                        outfit=global_outfit
                                     )
-                                    st.session_state.animator_gender = global_gender
+                                    st.session_state.animator_key = _anim_key
                             
                             animator = st.session_state.animator
                             
@@ -572,7 +587,7 @@ with tab4:
     if not os.path.exists(poses_dir):
         st.error(f"Poses directory not found at {poses_dir}")
     else:
-        from poses_to_animation import PoseAssembler, render_pose_folder
+        from backend.core.poses_to_animation import PoseAssembler, render_pose_folder
         assembler = PoseAssembler(poses_dir)
         pose_folders = assembler.list_folders()
         

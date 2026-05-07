@@ -614,3 +614,79 @@ html.light-theme .yt-lite iframe {
 @media (max-width: 768px) {
   .desktop-only { display: none !important; }
 }
+/* ═══════════════════════════════════════════════
+   WELCOME AVATAR — migam.ai style
+   ═══════════════════════════════════════════════ */
+.welcome-avatar-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  width: 180px;
+  height: 180px;
+  pointer-events: none;
+  animation: fade-in-up 1s cubic-bezier(0.4, 0, 0.2, 1) 3s both;
+}
+
+.welcome-avatar-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  mix-blend-mode: screen; /* Secondary insurance for any near-black pixels */
+  filter: drop-shadow(0 15px 30px rgba(0, 0, 0, 0.6));
+  transform: scale(1.6); 
+  transform-origin: bottom center;
+  image-rendering: auto;
+}
+
+.welcome-avatar-bubble {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(5, 5, 5, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 212, 170, 0.2);
+  padding: 4px 12px;
+  border-radius: 30px;
+  color: #00d4aa;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: auto;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  animation: fade-in 0.6s ease-out 4s both;
+}
+
+.welcome-avatar-close {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: all 0.2s;
+}
+
+.welcome-avatar-close:hover {
+  background: rgba(239, 68, 68, 0.8);
+  border-color: #ef4444;
+}
+
+@media (max-width: 768px) {
+  .welcome-avatar-container {
+    width: 140px;
+    height: 140px;
+    bottom: 80px; /* Above bottom nav */
+    right: 12px;
+  }
+}

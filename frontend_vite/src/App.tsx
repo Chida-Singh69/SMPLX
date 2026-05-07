@@ -158,6 +158,107 @@ function useScrollReveal() {
   return observe;
 }
 
+/* ═══ Welcome Avatar Component ═══ */
+function WelcomeAvatar() {
+  const [visible, setVisible] = useState(true);
+  const [showBubble, setShowBubble] = useState(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    let raf: number;
+    const render = () => {
+      if (video.paused || video.ended) {
+        raf = requestAnimationFrame(render);
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const l = frame.data.length;
+
+      for (let i = 0; i < l; i += 4) {
+        const r = frame.data[i];
+        const g = frame.data[i + 1];
+        const b = frame.data[i + 2];
+        
+        // Improved Luma key with slight feathering
+        const brightness = (r + g + b) / 3;
+        if (brightness < 30) {
+          // Smoothly fade out near-black pixels
+          frame.data[i + 3] = brightness < 10 ? 0 : (brightness - 10) * 12.75;
+        }
+      }
+      ctx.putImageData(frame, 0, 0);
+      raf = requestAnimationFrame(render);
+    };
+
+    const handlePlay = () => {
+      raf = requestAnimationFrame(render);
+    };
+
+    video.addEventListener('play', handlePlay);
+    // Force play if needed
+    video.play().catch(() => {
+      // Autoplay might be blocked, wait for any click
+      const resume = () => { video.play(); window.removeEventListener('click', resume); };
+      window.addEventListener('click', resume);
+    });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      video.removeEventListener('play', handlePlay);
+    };
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="welcome-avatar-container">
+      <div className="welcome-avatar-video-wrap" style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <video 
+          ref={videoRef}
+          src="/assets/welcome_avatar.mp4"
+          autoPlay 
+          loop 
+          muted 
+          playsInline
+          style={{ display: 'none' }}
+        />
+        <canvas 
+          ref={canvasRef}
+          width={640} 
+          height={480}
+          className="welcome-avatar-video"
+        />
+        
+        {showBubble && (
+          <div className="welcome-avatar-bubble" onClick={() => setShowBubble(false)} style={{ cursor: 'pointer' }}>
+            Welcome to Silentvoice! 👋
+          </div>
+        )}
+        
+        <button 
+          className="welcome-avatar-close" 
+          style={{ top: 0, right: 0, opacity: 0.6, zIndex: 10 }} 
+          onClick={() => setVisible(false)}
+          title="Dismiss avatar"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ═══ MAIN APP ═══ */
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -177,6 +278,7 @@ export default function App() {
   return (
     <>
       {loading && <LoadingScreen onDone={() => setLoading(false)} />}
+      <WelcomeAvatar />
 
       <div style={{
         display: 'flex', flexDirection: 'column', minHeight: '100vh',
@@ -230,9 +332,9 @@ export default function App() {
                 color: gender === g ? '#050505' : 'rgba(255,255,255,0.50)',
               }}>{g}</button>
             ))}
-            
+
             <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)', margin: '0 8px' }} />
-            
+
             <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} style={{
               background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
               color: 'rgba(255,255,255,0.8)', padding: '4px 12px', borderRadius: 20,
@@ -434,9 +536,9 @@ function AboutSection() {
         {/* Panoramic Process Image */}
         <div className="animate-on-scroll" style={{ marginTop: 48, borderRadius: '1.5rem', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 10px 40px rgba(0,0,0,0.4)', position: 'relative', height: 280 }}>
           <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to top, rgba(5,5,5,0.8), transparent)' }} />
-          <img 
-            src="https://images.unsplash.com/photo-1633412802994-5c058f151b66?auto=format&fit=crop&w=1200&q=80" 
-            alt="AI Rendering Process" 
+          <img
+            src="https://images.unsplash.com/photo-1633412802994-5c058f151b66?auto=format&fit=crop&w=1200&q=80"
+            alt="AI Rendering Process"
             style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }}
           />
           <div style={{ position: 'absolute', bottom: 24, left: 32, zIndex: 2 }}>
@@ -451,10 +553,10 @@ function AboutSection() {
         display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 96,
       }}>
         {[
-          { value: '95%', label: 'Translation Accuracy' },
-          { value: '10,000+', label: 'Sentences in Dataset' },
-          { value: '3', label: 'Avatar Body Models' },
-          { value: '<5s', label: 'Avg. Render Time' },
+          { value: 'High', label: 'Translation Accuracy' },
+          { value: '30,000+', label: 'Sentences in Dataset' },
+          { value: 'multiple', label: 'Avatar Body Models' },
+          { value: 'up to 7s', label: 'Avg. Render Time' },
         ].map((s, i) => (
           <div key={s.label} className="dark-card" style={{
             ...card, textAlign: 'center', padding: '36px 20px',
@@ -481,12 +583,12 @@ function AboutSection() {
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
           {[
-            { name: 'SMPL-X', cat: 'core' }, { name: 'PyTorch', cat: 'core' },
+            { name: 'SMPL-X', cat: 'core' },
             { name: 'How2Sign', cat: 'data' }, { name: 'Flask', cat: 'api' },
-            { name: 'React', cat: 'ui' }, { name: 'Vite', cat: 'ui' },
-            { name: 'OpenCV', cat: 'core' }, { name: 'SentenceTransformers', cat: 'ai' },
-            { name: 'YouTube API', cat: 'api' }, { name: 'Trimesh', cat: 'core' },
-            { name: 'Pyrender', cat: 'core' }, { name: 'NumPy', cat: 'core' },
+            { name: 'React', cat: 'ui' }, { name: 'Vite', cat: 'ui' }
+            , { name: 'SentenceTransformers', cat: 'ai' },
+            { name: 'FAISS', cat: 'api' }, { name: 'Trimesh', cat: 'core' },
+            { name: 'Pyrender', cat: 'core' }, { name: 'PyTorch', cat: 'core' },
           ].map(t => (
             <span key={t.name} style={{
               fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 12,
@@ -516,7 +618,7 @@ function AboutSection() {
         <div style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'linear-gradient(180deg, rgba(5,5,5,0.5) 0%, rgba(5,5,5,0.9) 100%)' }} />
 
         <div className="anim-pulse-glow" style={{ position: 'absolute', top: -60, right: -60, width: 300, height: 300, borderRadius: '50%', background: '#00d4aa', filter: 'blur(120px)', opacity: 0.15, pointerEvents: 'none' }} />
-        
+
         <div style={{ position: 'relative', zIndex: 1 }}>
           <h2 style={{ fontSize: 'clamp(28px, 3.5vw, 42px)', fontWeight: 800, color: '#ffffff', margin: '0 0 16px', letterSpacing: '-0.5px' }}>
             Ready to translate?
@@ -606,7 +708,7 @@ function UserSection() {
 
       <div style={{ ...card, background: 'rgba(0,212,170,0.04)', borderColor: 'rgba(0,212,170,0.10)' }}>
         <p style={{ fontSize: 12.5, color: 'rgba(0,212,170,0.60)', margin: 0, textAlign: 'center' }}>
-          ⚙️ Settings · Integrations · API Keys — <em>coming soon</em>
+          Diffusion Model · Integrations · API Keys — <em>coming soon</em>
         </p>
       </div>
     </div>

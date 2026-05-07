@@ -70,18 +70,24 @@ for pkl_file, word in gloss_map.items():
 dataset_words = set(word_to_pkl.keys())
 print(f"Loaded {len(dataset_words)} words with available pose data (out of {len(gloss_map)} total)")
 
-# Initialize animators lazily by gender cache to save memory
+# Initialize animators lazily by (gender, outfit) cache to save memory
 animators_cache = {}
 
-def get_animators(gender='neutral'):
+def get_animators(gender='neutral', outfit=None):
+    from backend.core.avatar_appearance import GENDER_DEFAULT_OUTFIT
     gender = gender.lower()
-    if gender not in animators_cache:
-        print(f"[INFO] Lazily initializing SMPLX models for gender: {gender.upper()}")
-        animators_cache[gender] = {
-            'word': WordToSMPLX(model_path=os.path.join(current_dir, "..", "..", "models"), gender=gender),
-            'sentence': SentenceToSMPLX(model_path=os.path.join(current_dir, "..", "..", "models"), gender=gender)
+    if outfit is None:
+        outfit = GENDER_DEFAULT_OUTFIT.get(gender, 'tshirt')
+    cache_key = f"{gender}_{outfit}"
+    if cache_key not in animators_cache:
+        model_path = os.path.join(current_dir, "..", "..", "models")
+        print(f"[INFO] Lazily initializing SMPLX models for gender: {gender.upper()}, outfit: {outfit}")
+        animators_cache[cache_key] = {
+            'word': WordToSMPLX(model_path=model_path, gender=gender, outfit=outfit),
+            'sentence': SentenceToSMPLX(model_path=model_path, gender=gender, outfit=outfit)
         }
-    return animators_cache[gender]['word'], animators_cache[gender]['sentence']
+    return animators_cache[cache_key]['word'], animators_cache[cache_key]['sentence']
+
 
 # Initialize sentence matcher (lazy-loaded on first use)
 sentence_matcher = None
