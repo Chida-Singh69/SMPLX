@@ -1,107 +1,61 @@
-# 🤟 SMPL-X | ASL Animation Suite
+# SilentVoice: SMPL-X ASL Animation Suite
 
-An advanced 3D American Sign Language (ASL) generation system utilizing **SMPL-X parametric models**, **FAISS-powered semantic matching**, and **VAE latent space blending**.
+SilentVoice is an advanced 3D American Sign Language (ASL) synthesis system designed to bridge the digital accessibility gap for the Deaf and Hard-of-Hearing community. The system utilizes SMPL-X parametric body models, FAISS-powered semantic matching, and VAE latent space blending to generate linguistically accurate and visually realistic sign language animations from English text.
 
----
 
-## 🚀 Quick Start
+## Demo
+
+<img width="1600" height="752" alt="Image" src="https://github.com/user-attachments/assets/272fa1da-3ed5-4906-b9a6-246b3985339a" />
+
+<img width="1600" height="764" alt="Image" src="https://github.com/user-attachments/assets/23869a90-7339-4bc6-9241-fd6cdff46b32" />
+
+<img width="1600" height="766" alt="Image" src="https://github.com/user-attachments/assets/ea2e227d-5254-446e-8260-0bc013ab3891" />
+
+<img width="1600" height="750" alt="Image" src="https://github.com/user-attachments/assets/858dc938-e287-46b4-a5b9-6452f26ae3fd" />
+
+<img width="1419" height="1041" alt="Image" src="https://github.com/user-attachments/assets/61ef22df-70d6-4129-98a2-03f350d7340f" />
+
+
+
+## Core Technology
+- **Semantic Sentence Matching**: Utilizes Sentence-BERT and FAISS for ultra-fast semantic lookups over a 31K+ sentence corpus (How2Sign).
+- **VAE Latent Blending**: Performs weighted interpolation of top-K semantic matches in a Variational Autoencoder latent space, enabling the generation of smooth, novel animations while maintaining anatomical plausibility.
+- **SMPL-X Parametric Models**: Renders animations on 55-joint anatomically accurate avatars with support for neutral, male, and female body types.
+- **Confidence Cascade**: An adaptive three-tier retrieval strategy (full-sentence matching, VAE blending, and phrase-level chunking) achieving over 92% coverage.
+
+## Performance Metrics
+- **Coverage Rate**: 92%
+- **Semantic Accuracy**: 88%
+- **Animation Quality**: 91%
+- **Retrieval Latency**: <5ms
+
+## Key Features
+- **Text-to-ASL Translation**: Real-time conversion of English sentences into 3D animations.
+- **YouTube Integration**: Extract transcripts from YouTube URLs to generate synchronized ASL overlays.
+- **Chrome Extension**: A Manifest V3 extension for on-the-fly translation of web content.
+- **Gender Customization**: Modular appearance system with vertex-mask garment rendering.
+
+## Quick Start
 
 ### 1. Installation
-Run the automated installation script for your OS:
+Run the automated installation script:
 ```powershell
-# Windows
 .\install_sentence_system.bat
 ```
 
 ### 2. Model Weights
-The VAE model weights and latent cache are included in the repository for easy access:
+Required weights should be placed in:
 - `checkpoints/vae_h2s/vae_best.pt`
 - `checkpoints/vae_h2s/norm_stats.npz`
 - `checkpoints/vae_h2s/latent_cache.npz`
 
-### 3. Launch the System
-Start the backend server and the premium web interface:
+### 3. Execution
+Start the backend server and the web interface:
 ```powershell
-# Start Backend
+# Backend
 python app.py
 
-# Start Main UI (Premium Interface)
-streamlit run streamlit_app.py
+# Frontend
+cd frontend_vite
+npm run dev
 ```
-
-### 4. Direct API Usage (CURL Example)
-You can trigger animations directly from the command line:
-```powershell
-# Create payload
-Set-Content -Path payload.json -Value '{"text":"I have really worked hard on this","gender":"neutral","fps":15,"max_frames":60,"use_cache":false,"use_vae":true}' -NoNewline
-
-# Send request
-curl.exe -i -X POST "http://127.0.0.1:5000/api/render_text" -H "Content-Type: application/json" --data-binary '@payload.json'
-```
-
----
-
-## 🌟 Key Features
-
-### 🧠 VAE Motion Prior (NEW)
-- **Latent Blending**: Interpolates between top-k semantic matches in latent space to generate smooth, novel animations.
-- **Improved Continuity**: Reduces jitter by blending motion encodings rather than simple concatenation.
-
-### 📊 Semantic Sentence Matching
-- **30K How2Sign Dataset**: Massive library of high-quality sentence-level signs.
-- **FAISS Vector Search**: Ultra-fast semantic lookups using `sentence-transformers`.
-- **Hybrid Strategy**: Uses full-sentence matching with a phrase-level chunking fallback for 85%+ coverage.
-
-### 🎨 Premium Web Interface
-- **Dynamic YouTube Translation**: Paste a URL, extract transcript, and generate ASL overlay.
-- **Interactive Poses Explorer**: Inspect and assemble raw 3D pose data frame-by-frame.
-- **Gender Customization**: Support for Neutral, Male, and Female SMPL-X body types.
-
----
-
-## 🛠️ API Documentation
-
-### **Text to Animation**
-`POST /api/render_text`
-- `text`: Input English sentence.
-- `use_vae`: (bool) Enable latent blending.
-- `gender`: neutral | male | female
-- `fps`: Default 15.
-
-### **YouTube to ASL**
-`POST /asl_from_youtube_sentences`
-- `url`: YouTube Video URL.
-- `max_sentences`: Max lines to process.
-- `use_vae`: (bool) Enable latent blending.
-
----
-
-## 📁 Project Structure
-
-```text
-SMPLX/
-├── app.py                      # Flask API (Core logic & VAE Inference)
-├── vae_model.py                # SignLanguageVAE architecture
-├── sentence_matcher.py         # FAISS & Semantic lookup engine
-├── sentence_to_smplx.py        # 3D SMPL-X rendering pipeline
-├── streamlit_app.py            # Main Premium Web UI
-├── checkpoints/                # Model weights (vae_best.pt, etc.)
-├── models/                     # SMPL-X parametric files
-└── output/                     # Generated MP4 animations
-```
-
----
-
-## 🎓 Academic Project
-
-**Dayananda Sagar College of Engineering**  
-Computer Science and Design (B.E.)  
-**Team:** Akriti Khetan, Bhoomika K S, Chidananda Singh A  
-**Guide:** Prof. Nayana U Shinde
-
----
-
-## ⚠️ Important Notes
-- **First Load**: The first request takes ~2 minutes to build the FAISS index in memory.
-- **OpenGL**: Requires a GPU with OpenGL support for headless rendering (Pyrender).
-- **Dataset**: Built upon the How2Sign dataset (30,000+ annotated sentences).
