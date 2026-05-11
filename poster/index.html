@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SilentVoice — Research Poster</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="poster">
+
+  <!-- ═══════════ HEADER ═══════════ -->
+  <header class="header">
+    <div class="badge">IEEE Research Poster • CVPR-Style</div>
+    <h1 class="title">SilentVoice: Real-Time Text-to-ASL Animation<br>Using SMPL-X Body Models &amp; VAE Latent Blending</h1>
+    <p class="subtitle">Bridging the digital accessibility gap for 70 million Deaf/Hard-of-Hearing individuals with AI-driven 3D sign language synthesis on anatomically accurate avatars</p>
+    <div class="authors">
+      <div class="author">Akriti Khetan <span>1DS22CG003</span></div>
+      <div class="author">Bhoomika K S <span>1DS22CG012</span></div>
+      <div class="author">Chidananda Singh A <span>1DS22CG017</span></div>
+    </div>
+    <div class="affiliation">Dept. of Computer Science &amp; Design, Dayananda Sagar College of Engineering (VTU) &nbsp;|&nbsp; Guide: Prof. Nayana U Shinde</div>
+  </header>
+
+  <!-- ═══════════ KEY STATS BAR ═══════════ -->
+  <div class="stats-row">
+    <div class="stat"><div class="stat-value">92%</div><div class="stat-label">Coverage Rate</div></div>
+    <div class="stat"><div class="stat-value">88%</div><div class="stat-label">Semantic Accuracy</div></div>
+    <div class="stat"><div class="stat-value">31.6K</div><div class="stat-label">ASL Sequences</div></div>
+    <div class="stat"><div class="stat-value">&lt;5ms</div><div class="stat-label">Retrieval Latency</div></div>
+  </div>
+
+  <!-- ═══════════ MAIN GRID ═══════════ -->
+  <div class="grid">
+
+    <!-- ── THE PROBLEM ── -->
+    <div class="card">
+      <div class="card-icon">🔇</div>
+      <h2>The Problem: A Silent Digital Divide</h2>
+      <p>Over <strong>70 million</strong> Deaf/HoH individuals worldwide rely on sign language as their primary communication medium. Yet digital media accessibility remains critically insufficient:</p>
+      <ul>
+        <li><strong>Captions fail</strong> — they convey English text, not ASL grammar, spatial semantics, or handshape transitions</li>
+        <li><strong>Human interpreters don't scale</strong> — professional ASL interpretation costs make live coverage economically infeasible</li>
+        <li><strong>Existing avatar tools are shallow</strong> — restricted dictionaries, no novel input handling, visually unrealistic output</li>
+      </ul>
+      <p style="margin-top:0.8rem; color: var(--accent-cyan); font-weight:600; font-size:0.8rem;">→ We need a scalable, linguistically accurate, visually realistic system that translates arbitrary English into ASL animation in real time.</p>
+    </div>
+
+    <!-- ── OUR APPROACH ── -->
+    <div class="card">
+      <div class="card-icon">🧠</div>
+      <h2>Our Approach: Retrieval-Augmented VAE Synthesis</h2>
+      <p>SilentVoice introduces a novel <strong>four-stage cascade</strong> that bridges text understanding and 3D motion generation — combining the reliability of retrieval with the expressiveness of generative models:</p>
+      <div class="pipeline">
+        <div class="pipe-step">
+          <div class="pipe-num">1</div>
+          <div class="pipe-title">Semantic Search</div>
+          <div class="pipe-desc">Sentence-BERT + FAISS over 31K corpus</div>
+        </div>
+        <div class="pipe-step">
+          <div class="pipe-num">2</div>
+          <div class="pipe-title">Confidence Cascade</div>
+          <div class="pipe-desc">Three-tier adaptive retrieval strategy</div>
+        </div>
+        <div class="pipe-step">
+          <div class="pipe-num">3</div>
+          <div class="pipe-title">VAE Blending</div>
+          <div class="pipe-desc">Weighted latent interpolation of top-K</div>
+        </div>
+        <div class="pipe-step">
+          <div class="pipe-num">4</div>
+          <div class="pipe-title">SMPL-X Render</div>
+          <div class="pipe-desc">55-joint avatar with outfit layers</div>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag tag-cyan">SMPL-X</span>
+        <span class="tag tag-blue">FAISS</span>
+        <span class="tag tag-purple">VAE</span>
+        <span class="tag tag-pink">How2Sign</span>
+        <span class="tag tag-amber">Flask + React</span>
+      </div>
+    </div>
+
+    <!-- ── SYSTEM ARCHITECTURE (full width) ── -->
+    <div class="card full-width">
+      <div class="card-icon">⚙️</div>
+      <h2>System Architecture: End-to-End Pipeline</h2>
+      <p>Three-tier architecture: <strong>Presentation</strong> (React frontend + Chrome extension) → <strong>Application</strong> (Flask API + core pipeline) → <strong>Data</strong> (31K SMPL-X poses, VAE checkpoint, FAISS index)</p>
+      <img src="system_arch.png" alt="System Architecture" class="diagram-img">
+    </div>
+
+    <!-- ── KEY INNOVATION: VAE ── -->
+    <div class="card">
+      <div class="card-icon">✨</div>
+      <h2>Key Innovation: VAE Latent Blending</h2>
+      <p>Instead of retrieving a single clip, we encode <strong>top-K</strong> semantically matched pose sequences into a shared latent manifold and perform similarity-weighted interpolation:</p>
+      <div class="equation">
+        z<sub>blend</sub> = Σ(w<sub>i</sub> · z<sub>i</sub>) / Σw<sub>i</sub> &nbsp;→&nbsp; VAE Decode → [T × 182] SMPL-X
+      </div>
+      <p><strong>Why it works:</strong> Convex combinations in VAE latent space produce outputs that lie <em>within</em> the learned distribution of natural ASL motion — guaranteeing anatomical plausibility without hallucination artifacts.</p>
+      <img src="vae_arch.png" alt="VAE Architecture" class="diagram-img">
+    </div>
+
+    <!-- ── RESULTS ── -->
+    <div class="card">
+      <div class="card-icon">📊</div>
+      <h2>Results: VAE Blending Wins Across All Metrics</h2>
+      <p>Evaluated on 200-sentence held-out test set rated by 3 bilingual ASL/English evaluators:</p>
+      <table class="results-table">
+        <thead>
+          <tr><th>Strategy</th><th>Coverage</th><th>Semantic Acc.</th><th>Anim. Quality</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Pure Retrieval (top-1)</td><td>70.0%</td><td>68.5%</td><td>72.0%</td></tr>
+          <tr class="highlight-row"><td>VAE Latent Blending ★</td><td>92.0%</td><td>88.0%</td><td>91.0%</td></tr>
+          <tr><td>Chunked Matching</td><td>85.0%</td><td>79.5%</td><td>82.5%</td></tr>
+          <tr><td>MDM Generation (v3)</td><td>48.0%</td><td>41.0%</td><td>38.0%</td></tr>
+        </tbody>
+      </table>
+      <img src="results_chart.png" alt="Results Bar Chart" class="diagram-img">
+    </div>
+
+    <!-- ── DEPLOYMENT (full width) ── -->
+    <div class="card full-width">
+      <div class="card-icon">🚀</div>
+      <h2>Deployment: Three Delivery Modalities</h2>
+      <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:1rem; margin-top:0.8rem;">
+        <div style="text-align:center; padding:1rem; background:rgba(6,214,160,0.05); border-radius:10px; border:1px solid rgba(6,214,160,0.1);">
+          <div style="font-size:1.5rem; margin-bottom:0.5rem;">🌐</div>
+          <div style="font-size:0.8rem; font-weight:700; color:var(--text-primary);">React/Vite Web App</div>
+          <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.3rem;">YouTube integration, avatar gender selection, dark/light themes, real-time playback</div>
+        </div>
+        <div style="text-align:center; padding:1rem; background:rgba(59,130,246,0.05); border-radius:10px; border:1px solid rgba(59,130,246,0.1);">
+          <div style="font-size:1.5rem; margin-bottom:0.5rem;">🔌</div>
+          <div style="font-size:0.8rem; font-weight:700; color:var(--text-primary);">Flask REST API</div>
+          <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.3rem;">SHA-1 caching, lazy init, CORS support — plug into LMS, conferencing, streaming</div>
+        </div>
+        <div style="text-align:center; padding:1rem; background:rgba(139,92,246,0.05); border-radius:10px; border:1px solid rgba(139,92,246,0.1);">
+          <div style="font-size:1.5rem; margin-bottom:0.5rem;">🧩</div>
+          <div style="font-size:0.8rem; font-weight:700; color:var(--text-primary);">Chrome Extension</div>
+          <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.3rem;">Manifest V3 — select any text on any webpage → live ASL overlay</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONTRIBUTIONS ── -->
+    <div class="card">
+      <div class="card-icon">🏆</div>
+      <h2>Novel Contributions</h2>
+      <ul>
+        <li><strong>VAE-Mediated Latent Blending</strong> — first application to ASL motion synthesis; enables novel animations beyond pure retrieval while staying on the learned manifold</li>
+        <li><strong>Three-Tier Adaptive Retrieval</strong> — confidence-stratified cascade (full-sentence → VAE blend → spaCy chunking) achieving 94% total coverage</li>
+        <li><strong>Vertex-Mask Garment System</strong> — geometry-driven outfit rendering via analytical masks &amp; normal-offset proxy meshes, computed once, reused every frame</li>
+        <li><strong>End-to-End Deployable Stack</strong> — production-ready API + polished React frontend + browser extension architecture</li>
+      </ul>
+    </div>
+
+    <!-- ── FUTURE WORK ── -->
+    <div class="card">
+      <div class="card-icon">🔮</div>
+      <h2>Future Directions</h2>
+      <ul>
+        <li><strong>Three.js WebGL Renderer</strong> — client-side real-time rendering (3–7 min → 1–2 sec)</li>
+        <li><strong>Latent Diffusion in VAE Space</strong> — train diffusion model in 64-D latent space (65% dimension reduction)</li>
+        <li><strong>Fingerspelling Engine</strong> — 26-sign alphabet library for 100% theoretical coverage</li>
+        <li><strong>Multi-Language Support</strong> — extend to BSL, ISL with corpus-specific adapters</li>
+        <li><strong>Mobile App</strong> — React Native + quantized INT8 VAE via ONNX Runtime</li>
+      </ul>
+      <div class="tags" style="margin-top:1rem;">
+        <span class="tag tag-cyan">WebGL</span>
+        <span class="tag tag-purple">Latent Diffusion</span>
+        <span class="tag tag-pink">Fingerspelling</span>
+        <span class="tag tag-amber">Mobile</span>
+      </div>
+    </div>
+
+    <!-- ── KEY REFERENCES (full width) ── -->
+    <div class="card full-width">
+      <div class="card-icon">📚</div>
+      <h2>Key References</h2>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 2rem; font-size:0.72rem; color:var(--text-muted);">
+        <div>[1] Duarte et al., "How2Sign," <em>CVPR 2021</em></div>
+        <div>[2] Zheng et al., "SignAvatars," <em>arXiv 2023</em></div>
+        <div>[3] Pavlakos et al., "SMPL-X," <em>CVPR 2019</em></div>
+        <div>[4] Petrovich et al., "ACTOR (Transformer VAE)," <em>ICCV 2021</em></div>
+        <div>[5] Tevet et al., "Human Motion Diffusion Model," <em>ICLR 2023</em></div>
+        <div>[6] Reimers & Gurevych, "Sentence-BERT," <em>EMNLP 2019</em></div>
+        <div>[7] Kingma & Welling, "Auto-Encoding Variational Bayes," <em>ICLR 2014</em></div>
+        <div>[8] Johnson et al., "FAISS," <em>IEEE TBD 2021</em></div>
+      </div>
+    </div>
+
+  </div><!-- /grid -->
+
+  <footer class="footer">
+    <strong>SilentVoice</strong> &nbsp;|&nbsp; Dept. of CSD, Dayananda Sagar College of Engineering &nbsp;|&nbsp; AY 2025–26<br>
+    <span style="font-size:0.65rem;">SMPL-X · PyTorch · FAISS · Sentence-BERT · Flask · React/Vite · Chrome Extension</span>
+  </footer>
+
+</div><!-- /poster -->
+</body>
+</html>
