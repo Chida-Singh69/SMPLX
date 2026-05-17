@@ -5,7 +5,7 @@ SilentVoice is an advanced 3D American Sign Language (ASL) synthesis system desi
 
 ## Demo
 
-<img width="1600" height="752" alt="Image" src="https://github.com/user-attachments/assets/272fa1da-3ed5-4906-b9a6-246b3985339a" />
+<img width="1425" height="976" alt="Image" src="https://github.com/user-attachments/assets/11922b71-1b04-4b2f-b5ba-bbf948484baf" />
 
 <img width="1600" height="764" alt="Image" src="https://github.com/user-attachments/assets/23869a90-7339-4bc6-9241-fd6cdff46b32" />
 
